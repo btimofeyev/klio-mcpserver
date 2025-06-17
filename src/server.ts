@@ -148,7 +148,8 @@ class MCPHTTPServer {
         const sessionId = req.query.sessionId as string;
         
         if (!sessionId || !this.sseConnections.has(sessionId)) {
-          return res.status(400).json({ error: 'Invalid or missing session ID' });
+          res.status(400).json({ error: 'Invalid or missing session ID' });
+          return;
         }
 
         const message = req.body;
@@ -182,7 +183,7 @@ class MCPHTTPServer {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   }
 
-  private async handleMCPRequest(message: any): Promise<any> {
+  private async handleMCPRequest(message: any): Promise<any | null> {
     const { method, id, params } = message;
 
     switch (method) {
