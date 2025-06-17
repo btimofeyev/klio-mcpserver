@@ -1,0 +1,32 @@
+{
+  "name": "ai_tutor_mcp_server",
+  "version": "1.0.0",
+  "description": "MCP server for AI tutor chatbot with Supabase PostgreSQL integration",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "ai-tutor-mcp-server": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "test": "tsx test-connection.ts"
+  },
+  "keywords": ["mcp", "ai", "tutor", "supabase", "education"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@supabase/supabase-js": "^2.49.8",
+    "dotenv": "^16.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
