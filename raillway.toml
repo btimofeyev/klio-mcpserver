@@ -1,0 +1,15 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+[nixpacks]
+buildCommand = "npm run build"
+startCommand = "npm start"
+
+[[statics]]
+name = "public"
+path = "/public"

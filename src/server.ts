@@ -9,11 +9,13 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import http from 'http';
 
 dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const PORT = process.env.PORT || 3000;
 
 if (!supabaseUrl || !supabaseServiceKey) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables are required');
@@ -26,15 +28,43 @@ const supabase: SupabaseClient = createClient(supabaseUrl, supabaseServiceKey, {
   }
 });
 
-console.error('🔧 FIXED MCP Server initialized with enhanced debugging');
+console.error('🔧 Railway MCP Server initialized with enhanced debugging');
 
-class FixedMCPServer {
+// HTTP Server for Railway health checks
+const httpServer = http.createServer((req, res) => {
+  if (req.url === '/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ 
+      status: 'healthy', 
+      timestamp: new Date().toISOString(),
+      service: 'ai-tutor-mcp-server'
+    }));
+  } else if (req.url === '/' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+      <html>
+        <head><title>AI Tutor MCP Server</title></head>
+        <body>
+          <h1>AI Tutor MCP Server</h1>
+          <p>Status: Running</p>
+          <p>This is an MCP (Model Context Protocol) server for AI tutoring.</p>
+          <p>Health check: <a href="/health">/health</a></p>
+        </body>
+      </html>
+    `);
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  }
+});
+
+class RailwayMCPServer {
   private server: Server;
 
   constructor() {
     this.server = new Server(
       {
-        name: 'edunest-fixed-server',
+        name: 'edunest-railway-server',
         version: '1.2.0',
       },
       {
@@ -128,7 +158,7 @@ class FixedMCPServer {
     });
   }
 
-  // FIXED search method with enhanced debugging
+  // Keep all your existing methods from the original server
   private async searchDatabaseFixed(childId: string, query: string, searchType: string = 'all') {
     try {
       console.error(`🔍 FIXED SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
@@ -236,8 +266,9 @@ class FixedMCPServer {
     }
   }
 
-  // FIXED: Find all materials (was returning empty before)
+  // Include all other methods from your original server...
   private async findAllMaterials(childSubjectIds: string[], query: string) {
+    // Copy implementation from original server
     try {
       console.error(`🔍 Finding materials for childSubjectIds: ${childSubjectIds.join(', ')}`);
 
@@ -259,7 +290,6 @@ class FixedMCPServer {
         `)
         .in('child_subject_id', childSubjectIds);
 
-      // Only add query filter if query is provided and not empty
       if (query && query.trim() !== '') {
         queryBuilder = queryBuilder.or(`title.ilike.%${query}%,content_type.ilike.%${query}%`);
       }
@@ -282,10 +312,9 @@ class FixedMCPServer {
     }
   }
 
-  // FIXED: Find overdue materials with proper date comparison
   private async findOverdueMaterials(childSubjectIds: string[]) {
+    // Copy implementation from original server
     try {
-      // Get today's date in YYYY-MM-DD format
       const today = new Date();
       const todayString = today.toISOString().split('T')[0];
       
@@ -324,8 +353,8 @@ class FixedMCPServer {
     }
   }
 
-  // FIXED: Find graded materials
   private async findGradedMaterials(childSubjectIds: string[], query: string) {
+    // Copy implementation from original server
     try {
       console.error(`🔍 Finding graded materials`);
 
@@ -363,8 +392,8 @@ class FixedMCPServer {
     }
   }
 
-  // FIXED: Find recent materials  
   private async findRecentMaterials(childSubjectIds: string[]) {
+    // Copy implementation from original server
     try {
       const threeDaysAgo = new Date();
       threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
@@ -406,14 +435,12 @@ class FixedMCPServer {
     }
   }
 
-  // Keep existing getMaterialContent method
   private async getMaterialContent(childId: string, materialIdentifier: string) {
-    // Implementation same as before
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({ 
-          message: "getMaterialContent not yet implemented in fixed version" 
+          message: "getMaterialContent not yet implemented in railway version" 
         }, null, 2)
       }]
     };
@@ -446,11 +473,20 @@ class FixedMCPServer {
   }
 
   async run(): Promise<void> {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error('🔧 FIXED MCP server running with enhanced search logic');
+    // Start HTTP server first
+    httpServer.listen(PORT, () => {
+      console.error(`🌐 HTTP server running on port ${PORT}`);
+      console.error(`🔧 Railway MCP server running with enhanced search logic`);
+    });
+
+    // Only start MCP server in non-Railway environments or when explicitly requested
+    if (process.env.MCP_ENABLED === 'true' || !process.env.RAILWAY_ENVIRONMENT) {
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      console.error('🔧 MCP server connected via stdio');
+    }
   }
 }
 
-const server = new FixedMCPServer();
+const server = new RailwayMCPServer();
 server.run().catch(console.error);

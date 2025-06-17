@@ -9,8 +9,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node railway-start.js",
+    "start:local": "node dist/server.js",
     "dev": "tsx src/server.ts",
+    "dev:railway": "tsx src/railway-server.ts",
     "test": "tsx test-connection.ts"
   },
   "keywords": ["mcp", "ai", "tutor", "supabase", "education"],
