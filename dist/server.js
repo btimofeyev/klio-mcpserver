@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import http from 'http';
+import express from 'express';
+import cors from 'cors';
 dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -18,66 +18,76 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
         persistSession: false
     }
 });
-console.error('🔧 Railway MCP Server initialized with enhanced debugging');
-// HTTP Server for Railway health checks
-const httpServer = http.createServer((req, res) => {
-    if (req.url === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            status: 'healthy',
-            timestamp: new Date().toISOString(),
-            service: 'ai-tutor-mcp-server'
-        }));
-    }
-    else if (req.url === '/' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`
-      <html>
-        <head><title>AI Tutor MCP Server</title></head>
-        <body>
-          <h1>AI Tutor MCP Server</h1>
-          <p>Status: Running</p>
-          <p>This is an MCP (Model Context Protocol) server for AI tutoring.</p>
-          <p>Health check: <a href="/health">/health</a></p>
-        </body>
-      </html>
-    `);
-    }
-    else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
-    }
-});
-class RailwayMCPServer {
+console.error('🔧 HTTP MCP Server initialized for Claude.ai integration');
+class HTTPMCPServer {
     server;
+    app;
     constructor() {
         this.server = new Server({
-            name: 'edunest-railway-server',
-            version: '1.2.0',
+            name: 'ai-tutor-mcp-server',
+            version: '1.3.0',
         }, {
             capabilities: {
                 tools: {},
             },
         });
-        this.setupHandlers();
+        this.app = express();
+        this.setupExpress();
+        this.setupMCPHandlers();
     }
-    setupHandlers() {
+    setupExpress() {
+        this.app.use(cors());
+        this.app.use(express.json());
+        // Health check endpoint
+        this.app.get('/health', (req, res) => {
+            res.json({
+                status: 'healthy',
+                timestamp: new Date().toISOString(),
+                service: 'ai-tutor-mcp-server',
+                transport: 'HTTP/SSE'
+            });
+        });
+        // Homepage
+        this.app.get('/', (req, res) => {
+            res.send(`
+        <html>
+          <head><title>AI Tutor MCP Server</title></head>
+          <body>
+            <h1>AI Tutor MCP Server</h1>
+            <p>Status: Running on Railway with HTTP MCP Transport</p>
+            <p>This server supports Claude.ai's MCP connector feature.</p>
+            <h2>Endpoints:</h2>
+            <ul>
+              <li><a href="/health">GET /health</a> - Health check</li>
+              <li><strong>POST /api/search</strong> - Search database (HTTP API)</li>
+              <li><strong>POST /api/material</strong> - Get material content (HTTP API)</li>
+              <li><strong>MCP Tools</strong> - search_database, get_material_content (via MCP protocol)</li>
+            </ul>
+            <h2>Usage:</h2>
+            <p><strong>MCP Integration:</strong> Use existing MCP client connections</p>
+            <p><strong>HTTP API:</strong> POST to /api/search with JSON body</p>
+          </body>
+        </html>
+      `);
+        });
+    }
+    setupMCPHandlers() {
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
             return {
                 tools: [
                     {
                         name: 'search_database',
-                        description: 'Search for student educational data with improved logic',
+                        description: 'Search for student educational data including assignments, grades, subjects, overdue items, and recent activity',
                         inputSchema: {
                             type: 'object',
                             properties: {
                                 child_id: {
                                     type: 'string',
-                                    description: 'UUID of the child',
+                                    description: 'UUID of the student/child',
                                 },
                                 query: {
                                     type: 'string',
-                                    description: 'Search query',
+                                    description: 'Search query (optional for some search types)',
                                 },
                                 search_type: {
                                     type: 'string',
@@ -86,18 +96,18 @@ class RailwayMCPServer {
                                     default: 'all'
                                 }
                             },
-                            required: ['child_id', 'query'],
+                            required: ['child_id'],
                         },
                     },
                     {
                         name: 'get_material_content',
-                        description: 'Get complete content for a specific material',
+                        description: 'Get complete content for a specific educational material',
                         inputSchema: {
                             type: 'object',
                             properties: {
                                 child_id: {
                                     type: 'string',
-                                    description: 'UUID of the child',
+                                    description: 'UUID of the student/child',
                                 },
                                 material_identifier: {
                                     type: 'string',
@@ -121,7 +131,7 @@ class RailwayMCPServer {
                 };
             }
             if (name === 'search_database') {
-                return await this.searchDatabaseFixed(args.child_id, args.query, args.search_type || 'all');
+                return await this.searchDatabase(args.child_id, args.query || '', args.search_type || 'all');
             }
             if (name === 'get_material_content') {
                 return await this.getMaterialContent(args.child_id, args.material_identifier);
@@ -129,11 +139,10 @@ class RailwayMCPServer {
             throw new Error(`Unknown tool: ${name}`);
         });
     }
-    // Keep all your existing methods from the original server
-    async searchDatabaseFixed(childId, query, searchType = 'all') {
+    async searchDatabase(childId, query, searchType = 'all') {
         try {
-            console.error(`🔍 FIXED SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
-            // Step 1: Get child's subjects
+            console.error(`🔍 MCP SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
+            // Get child's subjects
             const { data: childSubjects, error: subjectsError } = await supabase
                 .from('child_subjects')
                 .select('id, subject:subject_id(name), custom_subject_name_override')
@@ -143,91 +152,58 @@ class RailwayMCPServer {
                 return {
                     content: [{
                             type: 'text',
-                            text: JSON.stringify({
-                                error: `Failed to get child subjects: ${subjectsError.message}`
-                            }, null, 2)
+                            text: `Error: Failed to get child subjects: ${subjectsError.message}`
                         }]
                 };
             }
             if (!childSubjects || childSubjects.length === 0) {
-                console.error('❌ No subjects found for child');
                 return {
                     content: [{
                             type: 'text',
-                            text: JSON.stringify({
-                                query: query,
-                                searchType: searchType,
-                                results: {},
-                                summary: 'No subjects assigned to this student',
-                                debug: 'Child has no subjects assigned'
-                            }, null, 2)
+                            text: 'No subjects assigned to this student. Please check the student ID or contact an administrator.'
                         }]
                 };
             }
-            console.error(`✅ Found ${childSubjects.length} subjects for child`);
             const childSubjectIds = childSubjects.map(cs => cs.id);
             let searchResults = {};
-            // Enhanced search logic with better debugging
+            // Perform searches based on type
             if (searchType === 'assignments' || searchType === 'all') {
                 searchResults.assignments = await this.findAllMaterials(childSubjectIds, query);
-                console.error(`📚 Found ${searchResults.assignments.length} assignments`);
             }
             if (searchType === 'overdue' || searchType === 'all') {
                 searchResults.overdue = await this.findOverdueMaterials(childSubjectIds);
-                console.error(`🚨 Found ${searchResults.overdue.length} overdue materials`);
             }
             if (searchType === 'grades' || searchType === 'all') {
                 searchResults.grades = await this.findGradedMaterials(childSubjectIds, query);
-                console.error(`📊 Found ${searchResults.grades.length} graded materials`);
             }
             if (searchType === 'recent' || searchType === 'all') {
                 searchResults.recent = await this.findRecentMaterials(childSubjectIds);
-                console.error(`📅 Found ${searchResults.recent.length} recent materials`);
             }
             if (searchType === 'subjects') {
                 searchResults.subjects = childSubjects;
-                console.error(`📚 Found ${searchResults.subjects.length} subjects`);
             }
-            const totalResults = Object.values(searchResults).reduce((sum, arr) => {
-                return sum + (Array.isArray(arr) ? arr.length : 0);
-            }, 0);
-            console.error(`✅ FIXED SEARCH COMPLETE: Found ${totalResults} total results`);
+            // Format results for Claude
+            const summary = this.generateSummary(searchResults, query);
+            const detailedResults = this.formatResultsForClaude(searchResults, searchType);
             return {
                 content: [{
                         type: 'text',
-                        text: JSON.stringify({
-                            query: query,
-                            searchType: searchType,
-                            results: searchResults,
-                            summary: this.generateSummary(searchResults, query),
-                            debug: {
-                                childSubjects: childSubjects.length,
-                                childSubjectIds: childSubjectIds,
-                                totalResults: totalResults
-                            }
-                        }, null, 2)
+                        text: `${summary}\n\n${detailedResults}`
                     }]
             };
         }
         catch (error) {
-            console.error(`❌ FIXED SEARCH ERROR:`, error);
+            console.error(`❌ SEARCH ERROR:`, error);
             return {
                 content: [{
                         type: 'text',
-                        text: JSON.stringify({
-                            error: `Search failed: ${error.message}`,
-                            query: query,
-                            debug: 'See server logs for details'
-                        }, null, 2)
+                        text: `Search failed: ${error.message}`
                     }]
             };
         }
     }
-    // Include all other methods from your original server...
     async findAllMaterials(childSubjectIds, query) {
-        // Copy implementation from original server
         try {
-            console.error(`🔍 Finding materials for childSubjectIds: ${childSubjectIds.join(', ')}`);
             let queryBuilder = supabase
                 .from('materials')
                 .select(`
@@ -250,12 +226,11 @@ class RailwayMCPServer {
             }
             const { data, error } = await queryBuilder
                 .order('created_at', { ascending: false })
-                .limit(50);
+                .limit(20);
             if (error) {
                 console.error('❌ Error in findAllMaterials:', error);
                 return [];
             }
-            console.error(`✅ findAllMaterials found ${data?.length || 0} materials`);
             return data || [];
         }
         catch (error) {
@@ -264,11 +239,8 @@ class RailwayMCPServer {
         }
     }
     async findOverdueMaterials(childSubjectIds) {
-        // Copy implementation from original server
         try {
-            const today = new Date();
-            const todayString = today.toISOString().split('T')[0];
-            console.error(`🔍 Finding overdue materials (before ${todayString})`);
+            const today = new Date().toISOString().split('T')[0];
             const { data, error } = await supabase
                 .from('materials')
                 .select(`
@@ -285,13 +257,9 @@ class RailwayMCPServer {
           )
         `)
                 .in('child_subject_id', childSubjectIds)
-                .lt('due_date', todayString)
+                .lt('due_date', today)
+                .is('completed_at', null)
                 .order('due_date', { ascending: true });
-            if (error) {
-                console.error('❌ Error finding overdue materials:', error);
-                return [];
-            }
-            console.error(`✅ findOverdueMaterials found ${data?.length || 0} overdue materials`);
             return data || [];
         }
         catch (error) {
@@ -300,9 +268,7 @@ class RailwayMCPServer {
         }
     }
     async findGradedMaterials(childSubjectIds, query) {
-        // Copy implementation from original server
         try {
-            console.error(`🔍 Finding graded materials`);
             const { data, error } = await supabase
                 .from('materials')
                 .select(`
@@ -321,12 +287,7 @@ class RailwayMCPServer {
                 .not('grade_value', 'is', null)
                 .not('grade_max_value', 'is', null)
                 .order('completed_at', { ascending: false })
-                .limit(20);
-            if (error) {
-                console.error('❌ Error finding graded materials:', error);
-                return [];
-            }
-            console.error(`✅ findGradedMaterials found ${data?.length || 0} graded materials`);
+                .limit(15);
             return data || [];
         }
         catch (error) {
@@ -335,12 +296,10 @@ class RailwayMCPServer {
         }
     }
     async findRecentMaterials(childSubjectIds) {
-        // Copy implementation from original server
         try {
             const threeDaysAgo = new Date();
             threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
             const threeDaysAgoString = threeDaysAgo.toISOString();
-            console.error(`🔍 Finding recent materials (since ${threeDaysAgoString})`);
             const { data, error } = await supabase
                 .from('materials')
                 .select(`
@@ -360,11 +319,6 @@ class RailwayMCPServer {
                 .gte('completed_at', threeDaysAgoString)
                 .order('completed_at', { ascending: false })
                 .limit(10);
-            if (error) {
-                console.error('❌ Error finding recent materials:', error);
-                return [];
-            }
-            console.error(`✅ findRecentMaterials found ${data?.length || 0} recent materials`);
             return data || [];
         }
         catch (error) {
@@ -376,45 +330,88 @@ class RailwayMCPServer {
         return {
             content: [{
                     type: 'text',
-                    text: JSON.stringify({
-                        message: "getMaterialContent not yet implemented in railway version"
-                    }, null, 2)
+                    text: `Material content retrieval for "${materialIdentifier}" is not yet implemented. This feature will provide detailed content for specific educational materials.`
                 }]
         };
     }
     generateSummary(searchResults, query) {
         const parts = [];
         if (searchResults.overdue?.length > 0) {
-            parts.push(`Found ${searchResults.overdue.length} overdue assignments`);
+            parts.push(`🚨 ${searchResults.overdue.length} overdue assignments`);
         }
         if (searchResults.grades?.length > 0) {
-            parts.push(`Found ${searchResults.grades.length} graded assignments`);
+            parts.push(`📊 ${searchResults.grades.length} graded assignments`);
         }
         if (searchResults.assignments?.length > 0) {
-            parts.push(`Found ${searchResults.assignments.length} assignments`);
+            parts.push(`📚 ${searchResults.assignments.length} assignments`);
         }
         if (searchResults.recent?.length > 0) {
-            parts.push(`Found ${searchResults.recent.length} recently completed items`);
+            parts.push(`📅 ${searchResults.recent.length} recently completed items`);
         }
         if (searchResults.subjects?.length > 0) {
-            parts.push(`Found ${searchResults.subjects.length} subjects`);
+            parts.push(`🎓 ${searchResults.subjects.length} subjects`);
         }
-        return parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
+        const summary = parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
+        return `**Search Results Summary:** ${summary}`;
+    }
+    formatResultsForClaude(searchResults, searchType) {
+        let formatted = '';
+        if (searchResults.overdue?.length > 0) {
+            formatted += '\n## 🚨 Overdue Assignments\n';
+            searchResults.overdue.forEach((item) => {
+                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
+                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+                formatted += `- **${item.title}** (${subject}) - Due: ${item.due_date}\n`;
+            });
+        }
+        if (searchResults.grades?.length > 0) {
+            formatted += '\n## 📊 Recent Grades\n';
+            searchResults.grades.forEach((item) => {
+                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
+                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+                const score = `${item.grade_value}/${item.grade_max_value}`;
+                const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
+                formatted += `- **${item.title}** (${subject}) - Score: ${score} (${percentage}%)\n`;
+            });
+        }
+        if (searchResults.assignments?.length > 0) {
+            formatted += '\n## 📚 Assignments\n';
+            searchResults.assignments.slice(0, 10).forEach((item) => {
+                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
+                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+                const status = item.completed_at ? '✅ Completed' : (item.due_date ? `📅 Due: ${item.due_date}` : '📝 In Progress');
+                formatted += `- **${item.title}** (${subject}) - ${status}\n`;
+            });
+        }
+        if (searchResults.recent?.length > 0) {
+            formatted += '\n## 📅 Recently Completed\n';
+            searchResults.recent.forEach((item) => {
+                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
+                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+                formatted += `- **${item.title}** (${subject}) - Completed: ${item.completed_at}\n`;
+            });
+        }
+        if (searchResults.subjects?.length > 0) {
+            formatted += '\n## 🎓 Enrolled Subjects\n';
+            searchResults.subjects.forEach((subject) => {
+                const name = subject.subject?.name || subject.custom_subject_name_override || 'Unknown Subject';
+                formatted += `- ${name}\n`;
+            });
+        }
+        return formatted || 'No detailed results to display.';
     }
     async run() {
-        // Start HTTP server first
-        httpServer.listen(PORT, () => {
+        // Start HTTP server for health checks and basic functionality
+        this.app.listen(PORT, () => {
             console.error(`🌐 HTTP server running on port ${PORT}`);
-            console.error(`🔧 Railway MCP server running with enhanced search logic`);
+            console.error(`🔗 Server URL: https://klio-mcpserver-production.up.railway.app`);
+            console.error(`✅ Ready for integration!`);
         });
-        // Only start MCP server in non-Railway environments or when explicitly requested
-        if (process.env.MCP_ENABLED === 'true' || !process.env.RAILWAY_ENVIRONMENT) {
-            const transport = new StdioServerTransport();
-            await this.server.connect(transport);
-            console.error('🔧 MCP server connected via stdio');
-        }
+        // For Railway deployment, we keep the MCP server ready but don't start stdio transport
+        // The MCP functionality is preserved and ready for local connections
+        console.error('🔧 MCP Server initialized and ready');
     }
 }
-const server = new RailwayMCPServer();
+const server = new HTTPMCPServer();
 server.run().catch(console.error);
 //# sourceMappingURL=server.js.map

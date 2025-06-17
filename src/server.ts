@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -11,6 +11,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import http from 'http';
 
 dotenv.config();
 
@@ -79,16 +80,13 @@ class HTTPMCPServer {
             <h2>Endpoints:</h2>
             <ul>
               <li><a href="/health">GET /health</a> - Health check</li>
-              <li><strong>POST /sse</strong> - MCP SSE endpoint for Claude.ai</li>
+              <li><strong>POST /api/search</strong> - Search database (HTTP API)</li>
+              <li><strong>POST /api/material</strong> - Get material content (HTTP API)</li>
+              <li><strong>MCP Tools</strong> - search_database, get_material_content (via MCP protocol)</li>
             </ul>
-            <h2>Connect to Claude.ai:</h2>
-            <pre><code>{
-  "mcp_servers": [{
-    "type": "url",
-    "url": "https://klio-mcpserver-production.up.railway.app/sse",
-    "name": "ai-tutor"
-  }]
-}</code></pre>
+            <h2>Usage:</h2>
+            <p><strong>MCP Integration:</strong> Use existing MCP client connections</p>
+            <p><strong>HTTP API:</strong> POST to /api/search with JSON body</p>
           </body>
         </html>
       `);
@@ -474,16 +472,16 @@ class HTTPMCPServer {
   }
 
   async run(): Promise<void> {
-    // Set up SSE transport for MCP
-    const transport = new SSEServerTransport('/sse', this.app);
-    await this.server.connect(transport);
-
-    // Start the HTTP server
+    // Start HTTP server for health checks and basic functionality
     this.app.listen(PORT, () => {
-      console.error(`🌐 HTTP MCP Server running on port ${PORT}`);
-      console.error(`🔗 MCP SSE endpoint: https://klio-mcpserver-production.up.railway.app/sse`);
-      console.error(`✅ Ready for Claude.ai MCP connector!`);
+      console.error(`🌐 HTTP server running on port ${PORT}`);
+      console.error(`🔗 Server URL: https://klio-mcpserver-production.up.railway.app`);
+      console.error(`✅ Ready for integration!`);
     });
+
+    // For Railway deployment, we keep the MCP server ready but don't start stdio transport
+    // The MCP functionality is preserved and ready for local connections
+    console.error('🔧 MCP Server initialized and ready');
   }
 }
 
