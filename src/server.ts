@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 
 dotenv.config();
@@ -58,7 +58,7 @@ class HTTPMCPServer {
     this.app.use(express.json());
 
     // Health check endpoint
-    this.app.get('/health', (req, res) => {
+    this.app.get('/health', (req: Request, res: Response) => {
       res.json({ 
         status: 'healthy', 
         timestamp: new Date().toISOString(),
@@ -68,7 +68,7 @@ class HTTPMCPServer {
     });
 
     // Homepage
-    this.app.get('/', (req, res) => {
+    this.app.get('/', (req: Request, res: Response) => {
       res.send(`
         <html>
           <head><title>AI Tutor MCP Server</title></head>
