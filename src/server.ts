@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -9,7 +9,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import http from 'http';
+import express from 'express';
+import cors from 'cors';
 
 dotenv.config();
 
@@ -28,44 +29,17 @@ const supabase: SupabaseClient = createClient(supabaseUrl, supabaseServiceKey, {
   }
 });
 
-console.error('🔧 FIXED MCP Server initialized with enhanced debugging');
+console.error('🔧 HTTP MCP Server initialized for Claude.ai integration');
 
-// Add HTTP server for Railway
-const httpServer = http.createServer((req, res) => {
-  if (req.url === '/health' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ 
-      status: 'healthy', 
-      timestamp: new Date().toISOString(),
-      service: 'ai-tutor-mcp-server'
-    }));
-  } else if (req.url === '/' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`
-      <html>
-        <head><title>AI Tutor MCP Server</title></head>
-        <body>
-          <h1>AI Tutor MCP Server</h1>
-          <p>Status: Running on Railway</p>
-          <p>This is an MCP (Model Context Protocol) server for AI tutoring.</p>
-          <p>Health check: <a href="/health">/health</a></p>
-        </body>
-      </html>
-    `);
-  } else {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
-  }
-});
-
-class FixedMCPServer {
+class HTTPMCPServer {
   private server: Server;
+  private app: express.Application;
 
   constructor() {
     this.server = new Server(
       {
-        name: 'edunest-fixed-server',
-        version: '1.2.0',
+        name: 'ai-tutor-mcp-server',
+        version: '1.3.0',
       },
       {
         capabilities: {
@@ -74,26 +48,70 @@ class FixedMCPServer {
       }
     );
 
-    this.setupHandlers();
+    this.app = express();
+    this.setupExpress();
+    this.setupMCPHandlers();
   }
 
-  private setupHandlers(): void {
+  private setupExpress(): void {
+    this.app.use(cors());
+    this.app.use(express.json());
+
+    // Health check endpoint
+    this.app.get('/health', (req, res) => {
+      res.json({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        service: 'ai-tutor-mcp-server',
+        transport: 'HTTP/SSE'
+      });
+    });
+
+    // Homepage
+    this.app.get('/', (req, res) => {
+      res.send(`
+        <html>
+          <head><title>AI Tutor MCP Server</title></head>
+          <body>
+            <h1>AI Tutor MCP Server</h1>
+            <p>Status: Running on Railway with HTTP MCP Transport</p>
+            <p>This server supports Claude.ai's MCP connector feature.</p>
+            <h2>Endpoints:</h2>
+            <ul>
+              <li><a href="/health">GET /health</a> - Health check</li>
+              <li><strong>POST /sse</strong> - MCP SSE endpoint for Claude.ai</li>
+            </ul>
+            <h2>Connect to Claude.ai:</h2>
+            <pre><code>{
+  "mcp_servers": [{
+    "type": "url",
+    "url": "https://klio-mcpserver-production.up.railway.app/sse",
+    "name": "ai-tutor"
+  }]
+}</code></pre>
+          </body>
+        </html>
+      `);
+    });
+  }
+
+  private setupMCPHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
           {
             name: 'search_database',
-            description: 'Search for student educational data with improved logic',
+            description: 'Search for student educational data including assignments, grades, subjects, overdue items, and recent activity',
             inputSchema: {
               type: 'object',
               properties: {
                 child_id: {
                   type: 'string',
-                  description: 'UUID of the child',
+                  description: 'UUID of the student/child',
                 },
                 query: {
                   type: 'string',
-                  description: 'Search query',
+                  description: 'Search query (optional for some search types)',
                 },
                 search_type: {
                   type: 'string',
@@ -102,18 +120,18 @@ class FixedMCPServer {
                   default: 'all'
                 }
               },
-              required: ['child_id', 'query'],
+              required: ['child_id'],
             },
           },
           {
             name: 'get_material_content',
-            description: 'Get complete content for a specific material',
+            description: 'Get complete content for a specific educational material',
             inputSchema: {
               type: 'object',
               properties: {
                 child_id: {
                   type: 'string',
-                  description: 'UUID of the child',
+                  description: 'UUID of the student/child',
                 },
                 material_identifier: {
                   type: 'string',
@@ -140,9 +158,9 @@ class FixedMCPServer {
       }
 
       if (name === 'search_database') {
-        return await this.searchDatabaseFixed(
+        return await this.searchDatabase(
           args.child_id as string,
-          args.query as string,
+          args.query as string || '',
           (args.search_type as string) || 'all'
         );
       }
@@ -158,12 +176,11 @@ class FixedMCPServer {
     });
   }
 
-  // FIXED search method with enhanced debugging
-  private async searchDatabaseFixed(childId: string, query: string, searchType: string = 'all') {
+  private async searchDatabase(childId: string, query: string, searchType: string = 'all') {
     try {
-      console.error(`🔍 FIXED SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
+      console.error(`🔍 MCP SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
 
-      // Step 1: Get child's subjects
+      // Get child's subjects
       const { data: childSubjects, error: subjectsError } = await supabase
         .from('child_subjects')
         .select('id, subject:subject_id(name), custom_subject_name_override')
@@ -174,103 +191,68 @@ class FixedMCPServer {
         return {
           content: [{
             type: 'text',
-            text: JSON.stringify({ 
-              error: `Failed to get child subjects: ${subjectsError.message}` 
-            }, null, 2)
+            text: `Error: Failed to get child subjects: ${subjectsError.message}`
           }]
         };
       }
 
       if (!childSubjects || childSubjects.length === 0) {
-        console.error('❌ No subjects found for child');
         return {
           content: [{
             type: 'text',
-            text: JSON.stringify({
-              query: query,
-              searchType: searchType,
-              results: {},
-              summary: 'No subjects assigned to this student',
-              debug: 'Child has no subjects assigned'
-            }, null, 2)
+            text: 'No subjects assigned to this student. Please check the student ID or contact an administrator.'
           }]
         };
       }
 
-      console.error(`✅ Found ${childSubjects.length} subjects for child`);
       const childSubjectIds = childSubjects.map(cs => cs.id);
-
       let searchResults: Record<string, any> = {};
 
-      // Enhanced search logic with better debugging
+      // Perform searches based on type
       if (searchType === 'assignments' || searchType === 'all') {
         searchResults.assignments = await this.findAllMaterials(childSubjectIds, query);
-        console.error(`📚 Found ${searchResults.assignments.length} assignments`);
       }
 
       if (searchType === 'overdue' || searchType === 'all') {
         searchResults.overdue = await this.findOverdueMaterials(childSubjectIds);
-        console.error(`🚨 Found ${searchResults.overdue.length} overdue materials`);
       }
 
       if (searchType === 'grades' || searchType === 'all') {
         searchResults.grades = await this.findGradedMaterials(childSubjectIds, query);
-        console.error(`📊 Found ${searchResults.grades.length} graded materials`);
       }
 
       if (searchType === 'recent' || searchType === 'all') {
         searchResults.recent = await this.findRecentMaterials(childSubjectIds);
-        console.error(`📅 Found ${searchResults.recent.length} recent materials`);
       }
 
       if (searchType === 'subjects') {
         searchResults.subjects = childSubjects;
-        console.error(`📚 Found ${searchResults.subjects.length} subjects`);
       }
 
-      const totalResults = Object.values(searchResults).reduce((sum: number, arr: any) => {
-        return sum + (Array.isArray(arr) ? arr.length : 0);
-      }, 0);
-
-      console.error(`✅ FIXED SEARCH COMPLETE: Found ${totalResults} total results`);
+      // Format results for Claude
+      const summary = this.generateSummary(searchResults, query);
+      const detailedResults = this.formatResultsForClaude(searchResults, searchType);
 
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify({
-            query: query,
-            searchType: searchType,
-            results: searchResults,
-            summary: this.generateSummary(searchResults, query),
-            debug: {
-              childSubjects: childSubjects.length,
-              childSubjectIds: childSubjectIds,
-              totalResults: totalResults
-            }
-          }, null, 2)
+          text: `${summary}\n\n${detailedResults}`
         }]
       };
 
     } catch (error: any) {
-      console.error(`❌ FIXED SEARCH ERROR:`, error);
+      console.error(`❌ SEARCH ERROR:`, error);
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify({ 
-            error: `Search failed: ${error.message}`,
-            query: query,
-            debug: 'See server logs for details'
-          }, null, 2)
+          text: `Search failed: ${error.message}`
         }]
       };
     }
   }
 
-  // FIXED: Find all materials (was returning empty before)
   private async findAllMaterials(childSubjectIds: string[], query: string) {
     try {
-      console.error(`🔍 Finding materials for childSubjectIds: ${childSubjectIds.join(', ')}`);
-
       let queryBuilder = supabase
         .from('materials')
         .select(`
@@ -289,38 +271,30 @@ class FixedMCPServer {
         `)
         .in('child_subject_id', childSubjectIds);
 
-      // Only add query filter if query is provided and not empty
       if (query && query.trim() !== '') {
         queryBuilder = queryBuilder.or(`title.ilike.%${query}%,content_type.ilike.%${query}%`);
       }
 
       const { data, error } = await queryBuilder
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(20);
 
       if (error) {
         console.error('❌ Error in findAllMaterials:', error);
         return [];
       }
 
-      console.error(`✅ findAllMaterials found ${data?.length || 0} materials`);
       return data || [];
-
     } catch (error) {
       console.error('❌ Exception in findAllMaterials:', error);
       return [];
     }
   }
 
-  // FIXED: Find overdue materials with proper date comparison
   private async findOverdueMaterials(childSubjectIds: string[]) {
     try {
-      // Get today's date in YYYY-MM-DD format
-      const today = new Date();
-      const todayString = today.toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0];
       
-      console.error(`🔍 Finding overdue materials (before ${todayString})`);
-
       const { data, error } = await supabase
         .from('materials')
         .select(`
@@ -337,28 +311,19 @@ class FixedMCPServer {
           )
         `)
         .in('child_subject_id', childSubjectIds)
-        .lt('due_date', todayString)
+        .lt('due_date', today)
+        .is('completed_at', null)
         .order('due_date', { ascending: true });
 
-      if (error) {
-        console.error('❌ Error finding overdue materials:', error);
-        return [];
-      }
-
-      console.error(`✅ findOverdueMaterials found ${data?.length || 0} overdue materials`);
       return data || [];
-
     } catch (error) {
       console.error('❌ Exception in findOverdueMaterials:', error);
       return [];
     }
   }
 
-  // FIXED: Find graded materials
   private async findGradedMaterials(childSubjectIds: string[], query: string) {
     try {
-      console.error(`🔍 Finding graded materials`);
-
       const { data, error } = await supabase
         .from('materials')
         .select(`
@@ -377,30 +342,20 @@ class FixedMCPServer {
         .not('grade_value', 'is', null)
         .not('grade_max_value', 'is', null)
         .order('completed_at', { ascending: false })
-        .limit(20);
+        .limit(15);
 
-      if (error) {
-        console.error('❌ Error finding graded materials:', error);
-        return [];
-      }
-
-      console.error(`✅ findGradedMaterials found ${data?.length || 0} graded materials`);
       return data || [];
-
     } catch (error) {
       console.error('❌ Exception in findGradedMaterials:', error);
       return [];
     }
   }
 
-  // FIXED: Find recent materials  
   private async findRecentMaterials(childSubjectIds: string[]) {
     try {
       const threeDaysAgo = new Date();
       threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
       const threeDaysAgoString = threeDaysAgo.toISOString();
-
-      console.error(`🔍 Finding recent materials (since ${threeDaysAgoString})`);
 
       const { data, error } = await supabase
         .from('materials')
@@ -422,29 +377,18 @@ class FixedMCPServer {
         .order('completed_at', { ascending: false })
         .limit(10);
 
-      if (error) {
-        console.error('❌ Error finding recent materials:', error);
-        return [];
-      }
-
-      console.error(`✅ findRecentMaterials found ${data?.length || 0} recent materials`);
       return data || [];
-
     } catch (error) {
       console.error('❌ Exception in findRecentMaterials:', error);
       return [];
     }
   }
 
-  // Keep existing getMaterialContent method
   private async getMaterialContent(childId: string, materialIdentifier: string) {
-    // Implementation same as before
     return {
       content: [{
         type: 'text',
-        text: JSON.stringify({ 
-          message: "getMaterialContent not yet implemented in fixed version" 
-        }, null, 2)
+        text: `Material content retrieval for "${materialIdentifier}" is not yet implemented. This feature will provide detailed content for specific educational materials.`
       }]
     };
   }
@@ -453,47 +397,95 @@ class FixedMCPServer {
     const parts = [];
     
     if (searchResults.overdue?.length > 0) {
-      parts.push(`Found ${searchResults.overdue.length} overdue assignments`);
+      parts.push(`🚨 ${searchResults.overdue.length} overdue assignments`);
     }
     
     if (searchResults.grades?.length > 0) {
-      parts.push(`Found ${searchResults.grades.length} graded assignments`);
+      parts.push(`📊 ${searchResults.grades.length} graded assignments`);
     }
     
     if (searchResults.assignments?.length > 0) {
-      parts.push(`Found ${searchResults.assignments.length} assignments`);
+      parts.push(`📚 ${searchResults.assignments.length} assignments`);
     }
     
     if (searchResults.recent?.length > 0) {
-      parts.push(`Found ${searchResults.recent.length} recently completed items`);
+      parts.push(`📅 ${searchResults.recent.length} recently completed items`);
     }
     
     if (searchResults.subjects?.length > 0) {
-      parts.push(`Found ${searchResults.subjects.length} subjects`);
+      parts.push(`🎓 ${searchResults.subjects.length} subjects`);
     }
 
-    return parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
+    const summary = parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
+    return `**Search Results Summary:** ${summary}`;
+  }
+
+  private formatResultsForClaude(searchResults: Record<string, any>, searchType: string): string {
+    let formatted = '';
+
+    if (searchResults.overdue?.length > 0) {
+      formatted += '\n## 🚨 Overdue Assignments\n';
+      searchResults.overdue.forEach((item: any) => {
+        const subject = item.lesson?.unit?.child_subject?.subject?.name || 
+                       item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+        formatted += `- **${item.title}** (${subject}) - Due: ${item.due_date}\n`;
+      });
+    }
+
+    if (searchResults.grades?.length > 0) {
+      formatted += '\n## 📊 Recent Grades\n';
+      searchResults.grades.forEach((item: any) => {
+        const subject = item.lesson?.unit?.child_subject?.subject?.name || 
+                       item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+        const score = `${item.grade_value}/${item.grade_max_value}`;
+        const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
+        formatted += `- **${item.title}** (${subject}) - Score: ${score} (${percentage}%)\n`;
+      });
+    }
+
+    if (searchResults.assignments?.length > 0) {
+      formatted += '\n## 📚 Assignments\n';
+      searchResults.assignments.slice(0, 10).forEach((item: any) => {
+        const subject = item.lesson?.unit?.child_subject?.subject?.name || 
+                       item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+        const status = item.completed_at ? '✅ Completed' : (item.due_date ? `📅 Due: ${item.due_date}` : '📝 In Progress');
+        formatted += `- **${item.title}** (${subject}) - ${status}\n`;
+      });
+    }
+
+    if (searchResults.recent?.length > 0) {
+      formatted += '\n## 📅 Recently Completed\n';
+      searchResults.recent.forEach((item: any) => {
+        const subject = item.lesson?.unit?.child_subject?.subject?.name || 
+                       item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
+        formatted += `- **${item.title}** (${subject}) - Completed: ${item.completed_at}\n`;
+      });
+    }
+
+    if (searchResults.subjects?.length > 0) {
+      formatted += '\n## 🎓 Enrolled Subjects\n';
+      searchResults.subjects.forEach((subject: any) => {
+        const name = subject.subject?.name || subject.custom_subject_name_override || 'Unknown Subject';
+        formatted += `- ${name}\n`;
+      });
+    }
+
+    return formatted || 'No detailed results to display.';
   }
 
   async run(): Promise<void> {
-    // Start HTTP server for Railway
-    httpServer.listen(PORT, () => {
-      console.error(`🌐 HTTP server running on port ${PORT}`);
-      console.error(`🔧 MCP server ready for Railway deployment`);
-    });
+    // Set up SSE transport for MCP
+    const transport = new SSEServerTransport('/sse', this.app);
+    await this.server.connect(transport);
 
-    // Only start MCP stdio transport in local development
-    if (!process.env.RAILWAY_ENVIRONMENT) {
-      try {
-        const transport = new StdioServerTransport();
-        await this.server.connect(transport);
-        console.error('🔧 FIXED MCP server running with enhanced search logic');
-      } catch (error) {
-        console.error('MCP transport not available, running HTTP only');
-      }
-    }
+    // Start the HTTP server
+    this.app.listen(PORT, () => {
+      console.error(`🌐 HTTP MCP Server running on port ${PORT}`);
+      console.error(`🔗 MCP SSE endpoint: https://klio-mcpserver-production.up.railway.app/sse`);
+      console.error(`✅ Ready for Claude.ai MCP connector!`);
+    });
   }
 }
 
-const server = new FixedMCPServer();
+const server = new HTTPMCPServer();
 server.run().catch(console.error);
