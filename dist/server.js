@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -9,8 +7,10 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const PORT = process.env.PORT || 3000;
+console.error('🚀 Starting minimal MCP server...');
 if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables are required');
+    console.error('❌ Missing environment variables');
+    process.exit(1);
 }
 const supabase = createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
@@ -18,579 +18,84 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
         persistSession: false
     }
 });
-console.error('🔧 MCP Server initialized with HTTP transport');
-class MCPHTTPServer {
-    server;
-    app;
-    sseConnections = new Map();
-    constructor() {
-        this.server = new Server({
-            name: 'ai-tutor-mcp-server',
-            version: '1.3.0',
-        }, {
-            capabilities: {
-                tools: {},
-            },
-        });
-        this.app = express();
-        this.setupExpress();
-        this.setupMCPHandlers();
-    }
-    setupExpress() {
-        this.app.use(cors({
-            origin: '*',
-            methods: ['GET', 'POST', 'OPTIONS'],
-            allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With']
-        }));
-        // Handle preflight requests
-        this.app.options('*', (req, res) => {
-            res.header('Access-Control-Allow-Origin', '*');
-            res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With');
-            res.sendStatus(200);
-        });
-        this.app.use(express.json());
-        this.app.use(express.raw({ type: '*/*' }));
-        // Health check endpoint
-        this.app.get('/health', (req, res) => {
-            res.json({
-                status: 'healthy',
-                timestamp: new Date().toISOString(),
-                service: 'ai-tutor-mcp-server',
-                transport: 'HTTP/SSE MCP',
-                capabilities: ['tools']
-            });
-        });
-        // Homepage
-        this.app.get('/', (req, res) => {
-            res.send(`
-        <html>
-          <head><title>AI Tutor MCP Server</title></head>
-          <body>
-            <h1>AI Tutor MCP Server</h1>
-            <p>Status: Running on Railway with MCP HTTP Transport</p>
-            <p>This server supports the Model Context Protocol via HTTP/SSE.</p>
-            
-            <h2>MCP Tools Available:</h2>
-            <ul>
-              <li><strong>search_database</strong> - Search student educational data</li>
-              <li><strong>get_material_content</strong> - Get specific material content</li>
-            </ul>
-
-            <h2>Endpoints:</h2>
-            <ul>
-              <li><a href="/health">GET /health</a> - Health check</li>
-              <li><strong>GET /sse</strong> - MCP SSE connection endpoint</li>
-              <li><strong>POST /messages</strong> - MCP message handling endpoint</li>
-            </ul>
-
-            <h2>Connect to Claude.ai:</h2>
-            <pre><code>{
-  "mcp_servers": [{
-    "type": "url",
-    "url": "https://klio-mcpserver-production.up.railway.app/sse",
-    "name": "ai-tutor"
-  }]
-}</code></pre>
-          </body>
-        </html>
-      `);
-        });
-        // SSE endpoint for MCP connection
-        this.app.get('/sse', (req, res) => {
-            console.error('SSE connection request received');
-            console.error('Headers:', req.headers);
-            console.error('Query:', req.query);
-            const sessionId = this.generateSessionId();
-            // Set SSE headers
-            res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Cache-Control, Content-Type, Authorization',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-            });
-            // Store connection
-            this.sseConnections.set(sessionId, res);
-            // Send initial endpoint event
-            const endpointUrl = `/messages?sessionId=${sessionId}`;
-            res.write(`event: endpoint\n`);
-            res.write(`data: ${endpointUrl}\n\n`);
-            // Send periodic keepalive
-            const keepAlive = setInterval(() => {
-                if (this.sseConnections.has(sessionId)) {
-                    res.write(`event: ping\n`);
-                    res.write(`data: {}\n\n`);
-                }
-                else {
-                    clearInterval(keepAlive);
-                }
-            }, 30000);
-            // Handle client disconnect
-            req.on('close', () => {
-                this.sseConnections.delete(sessionId);
-                clearInterval(keepAlive);
-                console.error(`SSE connection closed: ${sessionId}`);
-            });
-            req.on('error', () => {
-                this.sseConnections.delete(sessionId);
-                clearInterval(keepAlive);
-                console.error(`SSE connection error: ${sessionId}`);
-            });
-            console.error(`SSE connection established: ${sessionId}`);
-        });
-        // Messages endpoint for MCP JSON-RPC
-        this.app.post('/messages', async (req, res) => {
-            try {
-                console.error('Messages endpoint hit');
-                console.error('Headers:', req.headers);
-                console.error('Query:', req.query);
-                console.error('Body:', req.body);
-                const sessionId = req.query.sessionId;
-                if (!sessionId) {
-                    console.error('No sessionId provided');
-                    res.status(400).json({ error: 'Missing session ID' });
-                    return;
-                }
-                if (!this.sseConnections.has(sessionId)) {
-                    console.error(`Invalid sessionId: ${sessionId}`);
-                    console.error('Available sessions:', Array.from(this.sseConnections.keys()));
-                    res.status(400).json({ error: 'Invalid session ID' });
-                    return;
-                }
-                const message = req.body;
-                console.error(`Received MCP message:`, JSON.stringify(message, null, 2));
-                // Handle MCP request
-                const response = await this.handleMCPRequest(message);
-                if (response) {
-                    console.error(`Sending response:`, JSON.stringify(response, null, 2));
-                    res.json(response);
-                }
-                else {
-                    console.error('No response needed (notification)');
-                    res.status(204).end();
+console.error('✅ Supabase client created');
+const app = express();
+// Basic middleware
+app.use(cors());
+app.use(express.json());
+console.error('✅ Express middleware set up');
+// Simple health check
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        service: 'ai-tutor-mcp-server-minimal'
+    });
+});
+// Homepage
+app.get('/', (req, res) => {
+    res.send(`
+    <html>
+      <head><title>AI Tutor MCP Server</title></head>
+      <body>
+        <h1>AI Tutor MCP Server - Minimal Version</h1>
+        <p>Status: Running</p>
+        <p><a href="/health">Health Check</a></p>
+        <p><a href="/sse">SSE Test</a></p>
+      </body>
+    </html>
+  `);
+});
+// Simple SSE endpoint
+app.get('/sse', (req, res) => {
+    console.error('SSE endpoint hit');
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+    });
+    // Send test event
+    res.write('event: test\n');
+    res.write('data: {"message": "SSE working"}\n\n');
+    // Handle cleanup
+    req.on('close', () => {
+        console.error('SSE connection closed');
+    });
+});
+// Basic MCP tools endpoint
+app.get('/mcp/tools', (req, res) => {
+    res.json({
+        tools: [
+            {
+                name: 'search_database',
+                description: 'Search student data',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string' },
+                        query: { type: 'string' }
+                    },
+                    required: ['child_id']
                 }
             }
-            catch (error) {
-                console.error('Error handling MCP message:', error);
-                res.status(500).json({
-                    jsonrpc: '2.0',
-                    id: req.body?.id || null,
-                    error: {
-                        code: -32603,
-                        message: 'Internal error',
-                        data: error.message
-                    }
-                });
-            }
-        });
-    }
-    generateSessionId() {
-        return Math.random().toString(36).substring(2) + Date.now().toString(36);
-    }
-    async handleMCPRequest(message) {
-        const { method, id, params } = message;
-        switch (method) {
-            case 'initialize':
-                return {
-                    jsonrpc: '2.0',
-                    id: id,
-                    result: {
-                        protocolVersion: '2024-11-05',
-                        capabilities: {
-                            tools: {}
-                        },
-                        serverInfo: {
-                            name: 'ai-tutor-mcp-server',
-                            version: '1.3.0'
-                        }
-                    }
-                };
-            case 'tools/list':
-                return {
-                    jsonrpc: '2.0',
-                    id: id,
-                    result: {
-                        tools: [
-                            {
-                                name: 'search_database',
-                                description: 'Search for student educational data including assignments, grades, subjects, overdue items, and recent activity',
-                                inputSchema: {
-                                    type: 'object',
-                                    properties: {
-                                        child_id: {
-                                            type: 'string',
-                                            description: 'UUID of the student/child',
-                                        },
-                                        query: {
-                                            type: 'string',
-                                            description: 'Search query (optional for some search types)',
-                                        },
-                                        search_type: {
-                                            type: 'string',
-                                            enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'all'],
-                                            description: 'Type of search to perform',
-                                            default: 'all'
-                                        }
-                                    },
-                                    required: ['child_id'],
-                                },
-                            },
-                            {
-                                name: 'get_material_content',
-                                description: 'Get complete content for a specific educational material',
-                                inputSchema: {
-                                    type: 'object',
-                                    properties: {
-                                        child_id: {
-                                            type: 'string',
-                                            description: 'UUID of the student/child',
-                                        },
-                                        material_identifier: {
-                                            type: 'string',
-                                            description: 'Material title, ID, or identifier',
-                                        }
-                                    },
-                                    required: ['child_id', 'material_identifier'],
-                                },
-                            }
-                        ]
-                    }
-                };
-            case 'tools/call':
-                const toolName = params?.name;
-                const toolArgs = params?.arguments || {};
-                if (toolName === 'search_database') {
-                    const result = await this.searchDatabase(toolArgs.child_id, toolArgs.query || '', toolArgs.search_type || 'all');
-                    return {
-                        jsonrpc: '2.0',
-                        id: id,
-                        result: {
-                            content: [
-                                {
-                                    type: 'text',
-                                    text: result.success ? result.formatted : result.error || result.message
-                                }
-                            ]
-                        }
-                    };
-                }
-                if (toolName === 'get_material_content') {
-                    const result = await this.getMaterialContent(toolArgs.child_id, toolArgs.material_identifier);
-                    return {
-                        jsonrpc: '2.0',
-                        id: id,
-                        result: {
-                            content: [
-                                {
-                                    type: 'text',
-                                    text: result.message || 'Material content not available'
-                                }
-                            ]
-                        }
-                    };
-                }
-                return {
-                    jsonrpc: '2.0',
-                    id: id,
-                    error: {
-                        code: -32601,
-                        message: `Unknown tool: ${toolName}`
-                    }
-                };
-            case 'initialized':
-                // No response needed for notification
-                return null;
-            default:
-                return {
-                    jsonrpc: '2.0',
-                    id: id,
-                    error: {
-                        code: -32601,
-                        message: `Method not found: ${method}`
-                    }
-                };
-        }
-    }
-    setupMCPHandlers() {
-        // Keep existing MCP handlers for compatibility
-        this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-            return {
-                tools: [
-                    {
-                        name: 'search_database',
-                        description: 'Search for student educational data with improved logic',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                child_id: { type: 'string', description: 'UUID of the child' },
-                                query: { type: 'string', description: 'Search query' },
-                                search_type: {
-                                    type: 'string',
-                                    enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'all'],
-                                    description: 'Type of search to perform',
-                                    default: 'all'
-                                }
-                            },
-                            required: ['child_id'],
-                        },
-                    }
-                ],
-            };
-        });
-        this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-            const { name, arguments: args } = request.params;
-            if (name === 'search_database') {
-                const result = await this.searchDatabase(args?.child_id, args?.query || '', args?.search_type || 'all');
-                return {
-                    content: [{
-                            type: 'text',
-                            text: result.success ? result.formatted : result.error || result.message
-                        }]
-                };
-            }
-            throw new Error(`Unknown tool: ${name}`);
-        });
-    }
-    // Keep all your existing database methods
-    async searchDatabase(childId, query, searchType = 'all') {
-        try {
-            console.error(`🔍 SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
-            const { data: childSubjects, error: subjectsError } = await supabase
-                .from('child_subjects')
-                .select('id, subject:subject_id(name), custom_subject_name_override')
-                .eq('child_id', childId);
-            if (subjectsError) {
-                return { success: false, error: `Failed to get child subjects: ${subjectsError.message}` };
-            }
-            if (!childSubjects || childSubjects.length === 0) {
-                return { success: false, message: 'No subjects assigned to this student.' };
-            }
-            const childSubjectIds = childSubjects.map(cs => cs.id);
-            let searchResults = {};
-            if (searchType === 'assignments' || searchType === 'all') {
-                searchResults.assignments = await this.findAllMaterials(childSubjectIds, query);
-            }
-            if (searchType === 'overdue' || searchType === 'all') {
-                searchResults.overdue = await this.findOverdueMaterials(childSubjectIds);
-            }
-            if (searchType === 'grades' || searchType === 'all') {
-                searchResults.grades = await this.findGradedMaterials(childSubjectIds, query);
-            }
-            if (searchType === 'recent' || searchType === 'all') {
-                searchResults.recent = await this.findRecentMaterials(childSubjectIds);
-            }
-            if (searchType === 'subjects') {
-                searchResults.subjects = childSubjects;
-            }
-            return {
-                success: true,
-                summary: this.generateSummary(searchResults, query),
-                results: searchResults,
-                formatted: this.formatResultsForClaude(searchResults, searchType)
-            };
-        }
-        catch (error) {
-            return { success: false, error: `Search failed: ${error.message}` };
-        }
-    }
-    async findAllMaterials(childSubjectIds, query) {
-        try {
-            let queryBuilder = supabase
-                .from('materials')
-                .select(`
-          id, title, due_date, completed_at, grade_value, grade_max_value, content_type, status,
-          lesson:lesson_id(
-            id, title,
-            unit:unit_id(
-              id, name,
-              child_subject:child_subject_id(
-                id,
-                subject:subject_id(name),
-                custom_subject_name_override
-              )
-            )
-          )
-        `)
-                .in('child_subject_id', childSubjectIds);
-            if (query && query.trim() !== '') {
-                queryBuilder = queryBuilder.or(`title.ilike.%${query}%,content_type.ilike.%${query}%`);
-            }
-            const { data, error } = await queryBuilder
-                .order('created_at', { ascending: false })
-                .limit(20);
-            return data || [];
-        }
-        catch (error) {
-            return [];
-        }
-    }
-    async findOverdueMaterials(childSubjectIds) {
-        try {
-            const today = new Date().toISOString().split('T')[0];
-            const { data, error } = await supabase
-                .from('materials')
-                .select(`
-          id, title, due_date, completed_at, content_type, status,
-          lesson:lesson_id(
-            title,
-            unit:unit_id(
-              name,
-              child_subject:child_subject_id(
-                subject:subject_id(name),
-                custom_subject_name_override
-              )
-            )
-          )
-        `)
-                .in('child_subject_id', childSubjectIds)
-                .lt('due_date', today)
-                .is('completed_at', null)
-                .order('due_date', { ascending: true });
-            return data || [];
-        }
-        catch (error) {
-            return [];
-        }
-    }
-    async findGradedMaterials(childSubjectIds, query) {
-        try {
-            const { data, error } = await supabase
-                .from('materials')
-                .select(`
-          id, title, grade_value, grade_max_value, completed_at, content_type,
-          lesson:lesson_id(
-            title,
-            unit:unit_id(
-              child_subject:child_subject_id(
-                subject:subject_id(name),
-                custom_subject_name_override
-              )
-            )
-          )
-        `)
-                .in('child_subject_id', childSubjectIds)
-                .not('grade_value', 'is', null)
-                .not('grade_max_value', 'is', null)
-                .order('completed_at', { ascending: false })
-                .limit(15);
-            return data || [];
-        }
-        catch (error) {
-            return [];
-        }
-    }
-    async findRecentMaterials(childSubjectIds) {
-        try {
-            const threeDaysAgo = new Date();
-            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-            const threeDaysAgoString = threeDaysAgo.toISOString();
-            const { data, error } = await supabase
-                .from('materials')
-                .select(`
-          id, title, completed_at, grade_value, grade_max_value, content_type,
-          lesson:lesson_id(
-            title,
-            unit:unit_id(
-              child_subject:child_subject_id(
-                subject:subject_id(name),
-                custom_subject_name_override
-              )
-            )
-          )
-        `)
-                .in('child_subject_id', childSubjectIds)
-                .not('completed_at', 'is', null)
-                .gte('completed_at', threeDaysAgoString)
-                .order('completed_at', { ascending: false })
-                .limit(10);
-            return data || [];
-        }
-        catch (error) {
-            return [];
-        }
-    }
-    async getMaterialContent(childId, materialIdentifier) {
-        return {
-            success: true,
-            message: `Material content retrieval for "${materialIdentifier}" is not yet implemented.`
-        };
-    }
-    generateSummary(searchResults, query) {
-        const parts = [];
-        if (searchResults.overdue?.length > 0) {
-            parts.push(`🚨 ${searchResults.overdue.length} overdue assignments`);
-        }
-        if (searchResults.grades?.length > 0) {
-            parts.push(`📊 ${searchResults.grades.length} graded assignments`);
-        }
-        if (searchResults.assignments?.length > 0) {
-            parts.push(`📚 ${searchResults.assignments.length} assignments`);
-        }
-        if (searchResults.recent?.length > 0) {
-            parts.push(`📅 ${searchResults.recent.length} recently completed items`);
-        }
-        if (searchResults.subjects?.length > 0) {
-            parts.push(`🎓 ${searchResults.subjects.length} subjects`);
-        }
-        return parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
-    }
-    formatResultsForClaude(searchResults, searchType) {
-        let formatted = '';
-        if (searchResults.overdue?.length > 0) {
-            formatted += '\n## 🚨 Overdue Assignments\n';
-            searchResults.overdue.forEach((item) => {
-                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
-                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
-                formatted += `- **${item.title}** (${subject}) - Due: ${item.due_date}\n`;
-            });
-        }
-        if (searchResults.grades?.length > 0) {
-            formatted += '\n## 📊 Recent Grades\n';
-            searchResults.grades.forEach((item) => {
-                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
-                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
-                const score = `${item.grade_value}/${item.grade_max_value}`;
-                const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
-                formatted += `- **${item.title}** (${subject}) - Score: ${score} (${percentage}%)\n`;
-            });
-        }
-        if (searchResults.assignments?.length > 0) {
-            formatted += '\n## 📚 Assignments\n';
-            searchResults.assignments.slice(0, 10).forEach((item) => {
-                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
-                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
-                const status = item.completed_at ? '✅ Completed' : (item.due_date ? `📅 Due: ${item.due_date}` : '📝 In Progress');
-                formatted += `- **${item.title}** (${subject}) - ${status}\n`;
-            });
-        }
-        if (searchResults.recent?.length > 0) {
-            formatted += '\n## 📅 Recently Completed\n';
-            searchResults.recent.forEach((item) => {
-                const subject = item.lesson?.unit?.child_subject?.subject?.name ||
-                    item.lesson?.unit?.child_subject?.custom_subject_name_override || 'Unknown Subject';
-                formatted += `- **${item.title}** (${subject}) - Completed: ${item.completed_at}\n`;
-            });
-        }
-        if (searchResults.subjects?.length > 0) {
-            formatted += '\n## 🎓 Enrolled Subjects\n';
-            searchResults.subjects.forEach((subject) => {
-                const name = subject.subject?.name || subject.custom_subject_name_override || 'Unknown Subject';
-                formatted += `- ${name}\n`;
-            });
-        }
-        return formatted || 'No detailed results to display.';
-    }
-    async run() {
-        this.app.listen(PORT, () => {
-            console.error(`🌐 MCP HTTP server running on port ${PORT}`);
-            console.error(`🔗 SSE endpoint: https://klio-mcpserver-production.up.railway.app/sse`);
-            console.error(`📨 Messages endpoint: https://klio-mcpserver-production.up.railway.app/messages`);
-            console.error(`✅ Ready for Claude.ai MCP connector!`);
-        });
-    }
-}
-const server = new MCPHTTPServer();
-server.run().catch(console.error);
+        ]
+    });
+});
+// Start server
+app.listen(PORT, () => {
+    console.error(`🌐 Server running on port ${PORT}`);
+    console.error(`✅ Ready at https://klio-mcpserver-production.up.railway.app`);
+}).on('error', (err) => {
+    console.error('❌ Server error:', err);
+    process.exit(1);
+});
+// Handle process errors
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    process.exit(1);
+});
 //# sourceMappingURL=server.js.map
