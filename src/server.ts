@@ -57,8 +57,16 @@ class MCPHTTPServer {
     this.app.use(cors({
       origin: '*',
       methods: ['GET', 'POST', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control']
+      allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With']
     }));
+    
+    // Handle preflight requests
+    this.app.options('*', (req: Request, res: Response) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With');
+      res.sendStatus(200);
+    });
     this.app.use(express.json());
     this.app.use(express.raw({ type: '*/*' }));
 
@@ -111,6 +119,10 @@ class MCPHTTPServer {
 
     // SSE endpoint for MCP connection
     this.app.get('/sse', (req: Request, res: Response) => {
+      console.error('SSE connection request received');
+      console.error('Headers:', req.headers);
+      console.error('Query:', req.query);
+      
       const sessionId = this.generateSessionId();
       
       // Set SSE headers
@@ -119,7 +131,8 @@ class MCPHTTPServer {
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Cache-Control'
+        'Access-Control-Allow-Headers': 'Cache-Control, Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
       });
 
       // Store connection
@@ -130,13 +143,27 @@ class MCPHTTPServer {
       res.write(`event: endpoint\n`);
       res.write(`data: ${endpointUrl}\n\n`);
 
+      // Send periodic keepalive
+      const keepAlive = setInterval(() => {
+        if (this.sseConnections.has(sessionId)) {
+          res.write(`event: ping\n`);
+          res.write(`data: {}\n\n`);
+        } else {
+          clearInterval(keepAlive);
+        }
+      }, 30000);
+
       // Handle client disconnect
       req.on('close', () => {
         this.sseConnections.delete(sessionId);
+        clearInterval(keepAlive);
+        console.error(`SSE connection closed: ${sessionId}`);
       });
 
       req.on('error', () => {
         this.sseConnections.delete(sessionId);
+        clearInterval(keepAlive);
+        console.error(`SSE connection error: ${sessionId}`);
       });
 
       console.error(`SSE connection established: ${sessionId}`);
@@ -145,10 +172,23 @@ class MCPHTTPServer {
     // Messages endpoint for MCP JSON-RPC
     this.app.post('/messages', async (req: Request, res: Response) => {
       try {
+        console.error('Messages endpoint hit');
+        console.error('Headers:', req.headers);
+        console.error('Query:', req.query);
+        console.error('Body:', req.body);
+        
         const sessionId = req.query.sessionId as string;
         
-        if (!sessionId || !this.sseConnections.has(sessionId)) {
-          res.status(400).json({ error: 'Invalid or missing session ID' });
+        if (!sessionId) {
+          console.error('No sessionId provided');
+          res.status(400).json({ error: 'Missing session ID' });
+          return;
+        }
+        
+        if (!this.sseConnections.has(sessionId)) {
+          console.error(`Invalid sessionId: ${sessionId}`);
+          console.error('Available sessions:', Array.from(this.sseConnections.keys()));
+          res.status(400).json({ error: 'Invalid session ID' });
           return;
         }
 
@@ -159,8 +199,10 @@ class MCPHTTPServer {
         const response = await this.handleMCPRequest(message);
         
         if (response) {
+          console.error(`Sending response:`, JSON.stringify(response, null, 2));
           res.json(response);
         } else {
+          console.error('No response needed (notification)');
           res.status(204).end();
         }
 

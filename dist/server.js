@@ -18,10 +18,11 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
         persistSession: false
     }
 });
-console.error('🔧 HTTP MCP Server initialized for Claude.ai integration');
-class HTTPMCPServer {
+console.error('🔧 MCP Server initialized with HTTP transport');
+class MCPHTTPServer {
     server;
     app;
+    sseConnections = new Map();
     constructor() {
         this.server = new Server({
             name: 'ai-tutor-mcp-server',
@@ -36,15 +37,28 @@ class HTTPMCPServer {
         this.setupMCPHandlers();
     }
     setupExpress() {
-        this.app.use(cors());
+        this.app.use(cors({
+            origin: '*',
+            methods: ['GET', 'POST', 'OPTIONS'],
+            allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With']
+        }));
+        // Handle preflight requests
+        this.app.options('*', (req, res) => {
+            res.header('Access-Control-Allow-Origin', '*');
+            res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With');
+            res.sendStatus(200);
+        });
         this.app.use(express.json());
+        this.app.use(express.raw({ type: '*/*' }));
         // Health check endpoint
         this.app.get('/health', (req, res) => {
             res.json({
                 status: 'healthy',
                 timestamp: new Date().toISOString(),
                 service: 'ai-tutor-mcp-server',
-                transport: 'HTTP/SSE'
+                transport: 'HTTP/SSE MCP',
+                capabilities: ['tools']
             });
         });
         // Homepage
@@ -54,41 +68,264 @@ class HTTPMCPServer {
           <head><title>AI Tutor MCP Server</title></head>
           <body>
             <h1>AI Tutor MCP Server</h1>
-            <p>Status: Running on Railway with HTTP MCP Transport</p>
-            <p>This server supports Claude.ai's MCP connector feature.</p>
+            <p>Status: Running on Railway with MCP HTTP Transport</p>
+            <p>This server supports the Model Context Protocol via HTTP/SSE.</p>
+            
+            <h2>MCP Tools Available:</h2>
+            <ul>
+              <li><strong>search_database</strong> - Search student educational data</li>
+              <li><strong>get_material_content</strong> - Get specific material content</li>
+            </ul>
+
             <h2>Endpoints:</h2>
             <ul>
               <li><a href="/health">GET /health</a> - Health check</li>
-              <li><strong>POST /api/search</strong> - Search database (HTTP API)</li>
-              <li><strong>POST /api/material</strong> - Get material content (HTTP API)</li>
-              <li><strong>MCP Tools</strong> - search_database, get_material_content (via MCP protocol)</li>
+              <li><strong>GET /sse</strong> - MCP SSE connection endpoint</li>
+              <li><strong>POST /messages</strong> - MCP message handling endpoint</li>
             </ul>
-            <h2>Usage:</h2>
-            <p><strong>MCP Integration:</strong> Use existing MCP client connections</p>
-            <p><strong>HTTP API:</strong> POST to /api/search with JSON body</p>
+
+            <h2>Connect to Claude.ai:</h2>
+            <pre><code>{
+  "mcp_servers": [{
+    "type": "url",
+    "url": "https://klio-mcpserver-production.up.railway.app/sse",
+    "name": "ai-tutor"
+  }]
+}</code></pre>
           </body>
         </html>
       `);
         });
+        // SSE endpoint for MCP connection
+        this.app.get('/sse', (req, res) => {
+            console.error('SSE connection request received');
+            console.error('Headers:', req.headers);
+            console.error('Query:', req.query);
+            const sessionId = this.generateSessionId();
+            // Set SSE headers
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Cache-Control, Content-Type, Authorization',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+            });
+            // Store connection
+            this.sseConnections.set(sessionId, res);
+            // Send initial endpoint event
+            const endpointUrl = `/messages?sessionId=${sessionId}`;
+            res.write(`event: endpoint\n`);
+            res.write(`data: ${endpointUrl}\n\n`);
+            // Send periodic keepalive
+            const keepAlive = setInterval(() => {
+                if (this.sseConnections.has(sessionId)) {
+                    res.write(`event: ping\n`);
+                    res.write(`data: {}\n\n`);
+                }
+                else {
+                    clearInterval(keepAlive);
+                }
+            }, 30000);
+            // Handle client disconnect
+            req.on('close', () => {
+                this.sseConnections.delete(sessionId);
+                clearInterval(keepAlive);
+                console.error(`SSE connection closed: ${sessionId}`);
+            });
+            req.on('error', () => {
+                this.sseConnections.delete(sessionId);
+                clearInterval(keepAlive);
+                console.error(`SSE connection error: ${sessionId}`);
+            });
+            console.error(`SSE connection established: ${sessionId}`);
+        });
+        // Messages endpoint for MCP JSON-RPC
+        this.app.post('/messages', async (req, res) => {
+            try {
+                console.error('Messages endpoint hit');
+                console.error('Headers:', req.headers);
+                console.error('Query:', req.query);
+                console.error('Body:', req.body);
+                const sessionId = req.query.sessionId;
+                if (!sessionId) {
+                    console.error('No sessionId provided');
+                    res.status(400).json({ error: 'Missing session ID' });
+                    return;
+                }
+                if (!this.sseConnections.has(sessionId)) {
+                    console.error(`Invalid sessionId: ${sessionId}`);
+                    console.error('Available sessions:', Array.from(this.sseConnections.keys()));
+                    res.status(400).json({ error: 'Invalid session ID' });
+                    return;
+                }
+                const message = req.body;
+                console.error(`Received MCP message:`, JSON.stringify(message, null, 2));
+                // Handle MCP request
+                const response = await this.handleMCPRequest(message);
+                if (response) {
+                    console.error(`Sending response:`, JSON.stringify(response, null, 2));
+                    res.json(response);
+                }
+                else {
+                    console.error('No response needed (notification)');
+                    res.status(204).end();
+                }
+            }
+            catch (error) {
+                console.error('Error handling MCP message:', error);
+                res.status(500).json({
+                    jsonrpc: '2.0',
+                    id: req.body?.id || null,
+                    error: {
+                        code: -32603,
+                        message: 'Internal error',
+                        data: error.message
+                    }
+                });
+            }
+        });
+    }
+    generateSessionId() {
+        return Math.random().toString(36).substring(2) + Date.now().toString(36);
+    }
+    async handleMCPRequest(message) {
+        const { method, id, params } = message;
+        switch (method) {
+            case 'initialize':
+                return {
+                    jsonrpc: '2.0',
+                    id: id,
+                    result: {
+                        protocolVersion: '2024-11-05',
+                        capabilities: {
+                            tools: {}
+                        },
+                        serverInfo: {
+                            name: 'ai-tutor-mcp-server',
+                            version: '1.3.0'
+                        }
+                    }
+                };
+            case 'tools/list':
+                return {
+                    jsonrpc: '2.0',
+                    id: id,
+                    result: {
+                        tools: [
+                            {
+                                name: 'search_database',
+                                description: 'Search for student educational data including assignments, grades, subjects, overdue items, and recent activity',
+                                inputSchema: {
+                                    type: 'object',
+                                    properties: {
+                                        child_id: {
+                                            type: 'string',
+                                            description: 'UUID of the student/child',
+                                        },
+                                        query: {
+                                            type: 'string',
+                                            description: 'Search query (optional for some search types)',
+                                        },
+                                        search_type: {
+                                            type: 'string',
+                                            enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'all'],
+                                            description: 'Type of search to perform',
+                                            default: 'all'
+                                        }
+                                    },
+                                    required: ['child_id'],
+                                },
+                            },
+                            {
+                                name: 'get_material_content',
+                                description: 'Get complete content for a specific educational material',
+                                inputSchema: {
+                                    type: 'object',
+                                    properties: {
+                                        child_id: {
+                                            type: 'string',
+                                            description: 'UUID of the student/child',
+                                        },
+                                        material_identifier: {
+                                            type: 'string',
+                                            description: 'Material title, ID, or identifier',
+                                        }
+                                    },
+                                    required: ['child_id', 'material_identifier'],
+                                },
+                            }
+                        ]
+                    }
+                };
+            case 'tools/call':
+                const toolName = params?.name;
+                const toolArgs = params?.arguments || {};
+                if (toolName === 'search_database') {
+                    const result = await this.searchDatabase(toolArgs.child_id, toolArgs.query || '', toolArgs.search_type || 'all');
+                    return {
+                        jsonrpc: '2.0',
+                        id: id,
+                        result: {
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: result.success ? result.formatted : result.error || result.message
+                                }
+                            ]
+                        }
+                    };
+                }
+                if (toolName === 'get_material_content') {
+                    const result = await this.getMaterialContent(toolArgs.child_id, toolArgs.material_identifier);
+                    return {
+                        jsonrpc: '2.0',
+                        id: id,
+                        result: {
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: result.message || 'Material content not available'
+                                }
+                            ]
+                        }
+                    };
+                }
+                return {
+                    jsonrpc: '2.0',
+                    id: id,
+                    error: {
+                        code: -32601,
+                        message: `Unknown tool: ${toolName}`
+                    }
+                };
+            case 'initialized':
+                // No response needed for notification
+                return null;
+            default:
+                return {
+                    jsonrpc: '2.0',
+                    id: id,
+                    error: {
+                        code: -32601,
+                        message: `Method not found: ${method}`
+                    }
+                };
+        }
     }
     setupMCPHandlers() {
+        // Keep existing MCP handlers for compatibility
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
             return {
                 tools: [
                     {
                         name: 'search_database',
-                        description: 'Search for student educational data including assignments, grades, subjects, overdue items, and recent activity',
+                        description: 'Search for student educational data with improved logic',
                         inputSchema: {
                             type: 'object',
                             properties: {
-                                child_id: {
-                                    type: 'string',
-                                    description: 'UUID of the student/child',
-                                },
-                                query: {
-                                    type: 'string',
-                                    description: 'Search query (optional for some search types)',
-                                },
+                                child_id: { type: 'string', description: 'UUID of the child' },
+                                query: { type: 'string', description: 'Search query' },
                                 search_type: {
                                     type: 'string',
                                     enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'all'],
@@ -98,75 +335,40 @@ class HTTPMCPServer {
                             },
                             required: ['child_id'],
                         },
-                    },
-                    {
-                        name: 'get_material_content',
-                        description: 'Get complete content for a specific educational material',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                child_id: {
-                                    type: 'string',
-                                    description: 'UUID of the student/child',
-                                },
-                                material_identifier: {
-                                    type: 'string',
-                                    description: 'Material title, ID, or identifier',
-                                }
-                            },
-                            required: ['child_id', 'material_identifier'],
-                        },
                     }
                 ],
             };
         });
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
-            if (!args) {
+            if (name === 'search_database') {
+                const result = await this.searchDatabase(args?.child_id, args?.query || '', args?.search_type || 'all');
                 return {
                     content: [{
                             type: 'text',
-                            text: JSON.stringify({ error: 'No arguments provided' }, null, 2)
+                            text: result.success ? result.formatted : result.error || result.message
                         }]
                 };
-            }
-            if (name === 'search_database') {
-                return await this.searchDatabase(args.child_id, args.query || '', args.search_type || 'all');
-            }
-            if (name === 'get_material_content') {
-                return await this.getMaterialContent(args.child_id, args.material_identifier);
             }
             throw new Error(`Unknown tool: ${name}`);
         });
     }
+    // Keep all your existing database methods
     async searchDatabase(childId, query, searchType = 'all') {
         try {
-            console.error(`🔍 MCP SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
-            // Get child's subjects
+            console.error(`🔍 SEARCH: "${query}" (type: ${searchType}) for child: ${childId}`);
             const { data: childSubjects, error: subjectsError } = await supabase
                 .from('child_subjects')
                 .select('id, subject:subject_id(name), custom_subject_name_override')
                 .eq('child_id', childId);
             if (subjectsError) {
-                console.error('❌ Error getting child subjects:', subjectsError);
-                return {
-                    content: [{
-                            type: 'text',
-                            text: `Error: Failed to get child subjects: ${subjectsError.message}`
-                        }]
-                };
+                return { success: false, error: `Failed to get child subjects: ${subjectsError.message}` };
             }
             if (!childSubjects || childSubjects.length === 0) {
-                return {
-                    content: [{
-                            type: 'text',
-                            text: 'No subjects assigned to this student. Please check the student ID or contact an administrator.'
-                        }]
-                };
+                return { success: false, message: 'No subjects assigned to this student.' };
             }
             const childSubjectIds = childSubjects.map(cs => cs.id);
             let searchResults = {};
-            // Perform searches based on type
             if (searchType === 'assignments' || searchType === 'all') {
                 searchResults.assignments = await this.findAllMaterials(childSubjectIds, query);
             }
@@ -182,24 +384,15 @@ class HTTPMCPServer {
             if (searchType === 'subjects') {
                 searchResults.subjects = childSubjects;
             }
-            // Format results for Claude
-            const summary = this.generateSummary(searchResults, query);
-            const detailedResults = this.formatResultsForClaude(searchResults, searchType);
             return {
-                content: [{
-                        type: 'text',
-                        text: `${summary}\n\n${detailedResults}`
-                    }]
+                success: true,
+                summary: this.generateSummary(searchResults, query),
+                results: searchResults,
+                formatted: this.formatResultsForClaude(searchResults, searchType)
             };
         }
         catch (error) {
-            console.error(`❌ SEARCH ERROR:`, error);
-            return {
-                content: [{
-                        type: 'text',
-                        text: `Search failed: ${error.message}`
-                    }]
-            };
+            return { success: false, error: `Search failed: ${error.message}` };
         }
     }
     async findAllMaterials(childSubjectIds, query) {
@@ -227,14 +420,9 @@ class HTTPMCPServer {
             const { data, error } = await queryBuilder
                 .order('created_at', { ascending: false })
                 .limit(20);
-            if (error) {
-                console.error('❌ Error in findAllMaterials:', error);
-                return [];
-            }
             return data || [];
         }
         catch (error) {
-            console.error('❌ Exception in findAllMaterials:', error);
             return [];
         }
     }
@@ -263,7 +451,6 @@ class HTTPMCPServer {
             return data || [];
         }
         catch (error) {
-            console.error('❌ Exception in findOverdueMaterials:', error);
             return [];
         }
     }
@@ -291,7 +478,6 @@ class HTTPMCPServer {
             return data || [];
         }
         catch (error) {
-            console.error('❌ Exception in findGradedMaterials:', error);
             return [];
         }
     }
@@ -322,16 +508,13 @@ class HTTPMCPServer {
             return data || [];
         }
         catch (error) {
-            console.error('❌ Exception in findRecentMaterials:', error);
             return [];
         }
     }
     async getMaterialContent(childId, materialIdentifier) {
         return {
-            content: [{
-                    type: 'text',
-                    text: `Material content retrieval for "${materialIdentifier}" is not yet implemented. This feature will provide detailed content for specific educational materials.`
-                }]
+            success: true,
+            message: `Material content retrieval for "${materialIdentifier}" is not yet implemented.`
         };
     }
     generateSummary(searchResults, query) {
@@ -351,8 +534,7 @@ class HTTPMCPServer {
         if (searchResults.subjects?.length > 0) {
             parts.push(`🎓 ${searchResults.subjects.length} subjects`);
         }
-        const summary = parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
-        return `**Search Results Summary:** ${summary}`;
+        return parts.length > 0 ? parts.join(', ') : `No results found for "${query}"`;
     }
     formatResultsForClaude(searchResults, searchType) {
         let formatted = '';
@@ -401,17 +583,14 @@ class HTTPMCPServer {
         return formatted || 'No detailed results to display.';
     }
     async run() {
-        // Start HTTP server for health checks and basic functionality
         this.app.listen(PORT, () => {
-            console.error(`🌐 HTTP server running on port ${PORT}`);
-            console.error(`🔗 Server URL: https://klio-mcpserver-production.up.railway.app`);
-            console.error(`✅ Ready for integration!`);
+            console.error(`🌐 MCP HTTP server running on port ${PORT}`);
+            console.error(`🔗 SSE endpoint: https://klio-mcpserver-production.up.railway.app/sse`);
+            console.error(`📨 Messages endpoint: https://klio-mcpserver-production.up.railway.app/messages`);
+            console.error(`✅ Ready for Claude.ai MCP connector!`);
         });
-        // For Railway deployment, we keep the MCP server ready but don't start stdio transport
-        // The MCP functionality is preserved and ready for local connections
-        console.error('🔧 MCP Server initialized and ready');
     }
 }
-const server = new HTTPMCPServer();
+const server = new MCPHTTPServer();
 server.run().catch(console.error);
 //# sourceMappingURL=server.js.map
