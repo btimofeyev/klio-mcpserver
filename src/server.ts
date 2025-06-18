@@ -333,9 +333,8 @@ async function searchDatabase(childId: string, query: string, searchType: string
       const overdue = await findOverdueMaterials(childSubjectIds);
       if (overdue.length > 0) {
         results.push(`🚨 **${overdue.length} Overdue Assignments:**`);
-        overdue.forEach(item => {
-          const subject = item.lesson?.unit?.child_subject?.subject?.name || 'Unknown Subject';
-          results.push(`- ${item.title} (${subject}) - Due: ${item.due_date}`);
+        overdue.forEach((item: any) => {
+          results.push(`- ${item.title} - Due: ${item.due_date}`);
         });
       }
     }
@@ -344,17 +343,16 @@ async function searchDatabase(childId: string, query: string, searchType: string
       const graded = await findGradedMaterials(childSubjectIds);
       if (graded.length > 0) {
         results.push(`\n📊 **Recent Grades:**`);
-        graded.forEach(item => {
-          const subject = item.lesson?.unit?.child_subject?.subject?.name || 'Unknown Subject';
+        graded.forEach((item: any) => {
           const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
-          results.push(`- ${item.title} (${subject}) - ${item.grade_value}/${item.grade_max_value} (${percentage}%)`);
+          results.push(`- ${item.title} - ${item.grade_value}/${item.grade_max_value} (${percentage}%)`);
         });
       }
     }
 
     if (searchType === 'subjects' || searchType === 'all') {
       results.push(`\n🎓 **Enrolled Subjects:**`);
-      childSubjects.forEach(subject => {
+      childSubjects.forEach((subject: any) => {
         const name = subject.subject?.name || subject.custom_subject_name_override || 'Unknown Subject';
         results.push(`- ${name}`);
       });
@@ -374,19 +372,7 @@ async function findOverdueMaterials(childSubjectIds: string[]) {
     
     const { data, error } = await supabase
       .from('materials')
-      .select(`
-        id, title, due_date, completed_at,
-        lesson:lesson_id(
-          title,
-          unit:unit_id(
-            name,
-            child_subject:child_subject_id(
-              subject:subject_id(name),
-              custom_subject_name_override
-            )
-          )
-        )
-      `)
+      .select('id, title, due_date, completed_at')
       .in('child_subject_id', childSubjectIds)
       .lt('due_date', today)
       .is('completed_at', null)
@@ -404,18 +390,7 @@ async function findGradedMaterials(childSubjectIds: string[]) {
   try {
     const { data, error } = await supabase
       .from('materials')
-      .select(`
-        id, title, grade_value, grade_max_value, completed_at,
-        lesson:lesson_id(
-          title,
-          unit:unit_id(
-            child_subject:child_subject_id(
-              subject:subject_id(name),
-              custom_subject_name_override
-            )
-          )
-        )
-      `)
+      .select('id, title, grade_value, grade_max_value, completed_at')
       .in('child_subject_id', childSubjectIds)
       .not('grade_value', 'is', null)
       .not('grade_max_value', 'is', null)
