@@ -334,20 +334,34 @@ async function searchDatabase(childId: string, query: string, searchType: string
 
     // Handle specific search types
     if (searchType === 'lessons' || searchType === 'all') {
-      const lessons = await findLessons(childSubjectIds);
-      if (lessons.length > 0) {
-        results.push(`📚 **Current Lessons (${lessons.length}):**`);
-        lessons.forEach((lesson: any) => {
-          const subjectName = lesson.child_subject?.subject?.name || 
-                             lesson.child_subject?.custom_subject_name_override || 'General';
-          const dueInfo = lesson.due_date ? ` - Due: ${lesson.due_date}` : '';
+      const allMaterials = await findAllMaterials(childSubjectIds);
+      if (allMaterials.length > 0) {
+        results.push(`📚 **Educational Materials (${allMaterials.length}):**`);
+        allMaterials.forEach((material: any) => {
+          const subjectName = material.child_subject?.subject?.name || 
+                             material.child_subject?.custom_subject_name_override || 'General';
+          const dueInfo = material.due_date ? ` - Due: ${material.due_date}` : '';
           
-          // Add basic lesson info
-          results.push(`- **${lesson.title}** (${subjectName})${dueInfo}`);
+          // Add content type icon
+          let icon = '📚';
+          switch(material.content_type) {
+            case 'lesson': icon = '📚'; break;
+            case 'assignment': icon = '📝'; break;
+            case 'worksheet': icon = '📄'; break;
+            case 'quiz': icon = '❓'; break;
+            case 'test': icon = '📋'; break;
+            case 'notes': icon = '📝'; break;
+            case 'reading_material': icon = '📖'; break;
+            default: icon = '📋'; break;
+          }
           
-          // Add parsed content if available
-          if (lesson.parsed_content) {
-            const content = lesson.parsed_content;
+          // Add basic material info with type
+          const typeLabel = material.content_type ? ` [${material.content_type}]` : '';
+          results.push(`- ${icon} **${material.title}**${typeLabel} (${subjectName})${dueInfo}`);
+          
+          // Add parsed content if available (mainly for lessons)
+          if (material.parsed_content) {
+            const content = material.parsed_content;
             
             // Add learning objectives
             if (content.learning_objectives && content.learning_objectives.length > 0) {
@@ -546,12 +560,12 @@ async function findGradedMaterials(childSubjectIds: string[]) {
   }
 }
 
-// Find lessons for the student
-async function findLessons(childSubjectIds: string[]) {
+// Find all educational materials for the student
+async function findAllMaterials(childSubjectIds: string[]) {
   try {
-    console.error('🔍 Finding lessons for child_subject_ids:', childSubjectIds);
+    console.error('🔍 Finding all materials for child_subject_ids:', childSubjectIds);
     
-    // Look for lessons in the materials table with content_type = 'lesson'
+    // Look for all educational materials with various content types
     const { data, error } = await supabase
       .from('materials')
       .select(`
@@ -562,28 +576,28 @@ async function findLessons(childSubjectIds: string[]) {
         )
       `)
       .in('child_subject_id', childSubjectIds)
-      .eq('content_type', 'lesson')
+      .in('content_type', ['lesson', 'assignment', 'worksheet', 'quiz', 'test', 'notes', 'reading_material', 'other'])
       .order('created_at', { ascending: true })
-      .limit(20);
+      .limit(30);
 
-    console.error('📚 Lessons query result:', { data, error, count: data?.length });
+    console.error('📚 All materials query result:', { data, error, count: data?.length });
 
     if (error) {
-      console.error('❌ Error in lessons query:', error);
+      console.error('❌ Error in all materials query:', error);
       return [];
     }
 
-    // Process lesson data to include parsed content
+    // Process material data to include parsed content (primarily for lessons)
     if (data && data.length > 0) {
-      return data.map(lesson => ({
-        ...lesson,
-        parsed_content: parseLessonContent(lesson.lesson_json)
+      return data.map(material => ({
+        ...material,
+        parsed_content: parseLessonContent(material.lesson_json)
       }));
     }
 
     return data || [];
   } catch (error) {
-    console.error('❌ Error finding lessons:', error);
+    console.error('❌ Error finding all materials:', error);
     return [];
   }
 }
