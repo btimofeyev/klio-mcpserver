@@ -269,6 +269,7 @@ async function searchDatabase(childId, query, searchType) {
             .from('child_subjects')
             .select('id, subject:subject_id(name), custom_subject_name_override')
             .eq('child_id', childId);
+        console.error('👤 Child subjects query:', { childId, data: childSubjects, error: subjectsError });
         if (subjectsError) {
             return `Error: Failed to get child subjects: ${subjectsError.message}`;
         }
@@ -276,6 +277,7 @@ async function searchDatabase(childId, query, searchType) {
             return 'No subjects assigned to this student. Please check the student ID.';
         }
         const childSubjectIds = childSubjects.map(cs => cs.id);
+        console.error('🎯 Child subject IDs:', childSubjectIds);
         let results = [];
         // Handle specific search types
         if (searchType === 'lessons' || searchType === 'all') {
@@ -456,35 +458,30 @@ async function findGradedMaterials(childSubjectIds) {
 // Find lessons for the student
 async function findLessons(childSubjectIds) {
     try {
-        // First get units for these child subjects
-        const { data: units, error: unitsError } = await supabase
-            .from('units')
-            .select('id')
-            .in('child_subject_id', childSubjectIds);
-        if (unitsError || !units || units.length === 0) {
-            return [];
-        }
-        const unitIds = units.map(u => u.id);
-        // Now get lessons for these units
+        console.error('🔍 Finding lessons for child_subject_ids:', childSubjectIds);
+        // Look for lessons in the materials table with content_type = 'lesson'
         const { data, error } = await supabase
-            .from('lessons')
+            .from('materials')
             .select(`
-        id, title, description, lesson_number, sequence_order, lesson_json,
-        unit:unit_id(
-          id, name,
-          child_subject:child_subject_id(
-            subject:subject_id(name),
-            custom_subject_name_override
-          )
+        id, title, description, due_date, created_at, content_type,
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
         )
       `)
-            .in('unit_id', unitIds)
-            .order('sequence_order', { ascending: true })
+            .in('child_subject_id', childSubjectIds)
+            .eq('content_type', 'lesson')
+            .order('created_at', { ascending: true })
             .limit(20);
+        console.error('📚 Lessons query result:', { data, error, count: data?.length });
+        if (error) {
+            console.error('❌ Error in lessons query:', error);
+            return [];
+        }
         return data || [];
     }
     catch (error) {
-        console.error('Error finding lessons:', error);
+        console.error('❌ Error finding lessons:', error);
         return [];
     }
 }
