@@ -341,7 +341,34 @@ async function searchDatabase(childId: string, query: string, searchType: string
           const subjectName = lesson.child_subject?.subject?.name || 
                              lesson.child_subject?.custom_subject_name_override || 'General';
           const dueInfo = lesson.due_date ? ` - Due: ${lesson.due_date}` : '';
+          
+          // Add basic lesson info
           results.push(`- **${lesson.title}** (${subjectName})${dueInfo}`);
+          
+          // Add parsed content if available
+          if (lesson.parsed_content) {
+            const content = lesson.parsed_content;
+            
+            // Add learning objectives
+            if (content.learning_objectives && content.learning_objectives.length > 0) {
+              results.push(`  📋 Objectives: ${content.learning_objectives.join(', ')}`);
+            }
+            
+            // Add content summary
+            if (content.content_summary) {
+              results.push(`  📖 Focus: ${content.content_summary}`);
+            }
+            
+            // Add keywords
+            if (content.keywords && content.keywords.length > 0) {
+              results.push(`  🔑 Key concepts: ${content.keywords.join(', ')}`);
+            }
+            
+            // Add difficulty level for confidence
+            if (content.difficulty_level) {
+              results.push(`  📊 Level: ${content.difficulty_level}`);
+            }
+          }
         });
         results.push('');
       }
@@ -528,7 +555,7 @@ async function findLessons(childSubjectIds: string[]) {
     const { data, error } = await supabase
       .from('materials')
       .select(`
-        id, title, due_date, created_at, content_type,
+        id, title, due_date, created_at, content_type, lesson_json,
         child_subject:child_subject_id(
           subject:subject_id(name),
           custom_subject_name_override
@@ -546,10 +573,59 @@ async function findLessons(childSubjectIds: string[]) {
       return [];
     }
 
+    // Process lesson data to include parsed content
+    if (data && data.length > 0) {
+      return data.map(lesson => ({
+        ...lesson,
+        parsed_content: parseLessonContent(lesson.lesson_json)
+      }));
+    }
+
     return data || [];
   } catch (error) {
     console.error('❌ Error finding lessons:', error);
     return [];
+  }
+}
+
+// Parse lesson JSON content and extract student-appropriate information
+function parseLessonContent(lessonJson: any) {
+  if (!lessonJson || typeof lessonJson !== 'object') {
+    return null;
+  }
+
+  try {
+    const parsed = {
+      learning_objectives: null,
+      content_summary: null,
+      keywords: null,
+      difficulty_level: null
+    };
+
+    // Extract learning objectives
+    if (lessonJson.learning_objectives && Array.isArray(lessonJson.learning_objectives)) {
+      parsed.learning_objectives = lessonJson.learning_objectives;
+    }
+
+    // Extract content summary
+    if (lessonJson.main_content_summary_or_extract) {
+      parsed.content_summary = lessonJson.main_content_summary_or_extract;
+    }
+
+    // Extract keywords/subtopics
+    if (lessonJson.subject_keywords_or_subtopics && Array.isArray(lessonJson.subject_keywords_or_subtopics)) {
+      parsed.keywords = lessonJson.subject_keywords_or_subtopics;
+    }
+
+    // Extract difficulty level (for student confidence building)
+    if (lessonJson.difficulty_level_suggestion) {
+      parsed.difficulty_level = lessonJson.difficulty_level_suggestion;
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('❌ Error parsing lesson content:', error);
+    return null;
   }
 }
 
