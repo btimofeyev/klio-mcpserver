@@ -285,13 +285,10 @@ async function searchDatabase(childId, query, searchType) {
             if (lessons.length > 0) {
                 results.push(`📚 **Current Lessons (${lessons.length}):**`);
                 lessons.forEach((lesson) => {
-                    const subjectName = lesson.unit?.child_subject?.subject?.name ||
-                        lesson.unit?.child_subject?.custom_subject_name_override || 'General';
-                    const lessonNum = lesson.lesson_number ? `Lesson ${lesson.lesson_number}: ` : '';
-                    results.push(`- ${lessonNum}**${lesson.title}** (${subjectName})`);
-                    if (lesson.description) {
-                        results.push(`  Description: ${lesson.description}`);
-                    }
+                    const subjectName = lesson.child_subject?.subject?.name ||
+                        lesson.child_subject?.custom_subject_name_override || 'General';
+                    const dueInfo = lesson.due_date ? ` - Due: ${lesson.due_date}` : '';
+                    results.push(`- **${lesson.title}** (${subjectName})${dueInfo}`);
                 });
                 results.push('');
             }
@@ -463,7 +460,7 @@ async function findLessons(childSubjectIds) {
         const { data, error } = await supabase
             .from('materials')
             .select(`
-        id, title, description, due_date, created_at, content_type,
+        id, title, due_date, created_at, content_type,
         child_subject:child_subject_id(
           subject:subject_id(name),
           custom_subject_name_override
