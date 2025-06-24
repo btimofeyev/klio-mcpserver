@@ -193,7 +193,7 @@ async function handleMCPMessage(message: any): Promise<any | null> {
           tools: [
             {
               name: 'search_database',
-              description: 'Search for student educational data including assignments, grades, and progress',
+              description: 'Search for student educational data including lessons, assignments, tests, quizzes, worksheets, grades, and progress',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -207,7 +207,7 @@ async function handleMCPMessage(message: any): Promise<any | null> {
                   },
                   search_type: {
                     type: 'string',
-                    enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'all'],
+                    enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'lessons', 'tests', 'quizzes', 'worksheets', 'study_materials', 'all'],
                     description: 'Type of search to perform',
                     default: 'all'
                   }
@@ -328,34 +328,135 @@ async function searchDatabase(childId: string, query: string, searchType: string
     const childSubjectIds = childSubjects.map(cs => cs.id);
     let results = [];
 
-    // Search based on type
+    // Handle specific search types
+    if (searchType === 'lessons' || searchType === 'all') {
+      const lessons = await findLessons(childSubjectIds);
+      if (lessons.length > 0) {
+        results.push(`📚 **Current Lessons (${lessons.length}):**`);
+        lessons.forEach((lesson: any) => {
+          const subjectName = lesson.unit?.child_subject?.subject?.name || 
+                             lesson.unit?.child_subject?.custom_subject_name_override || 'General';
+          const lessonNum = lesson.lesson_number ? `Lesson ${lesson.lesson_number}: ` : '';
+          results.push(`- ${lessonNum}**${lesson.title}** (${subjectName})`);
+          if (lesson.description) {
+            results.push(`  Description: ${lesson.description}`);
+          }
+        });
+        results.push('');
+      }
+    }
+
     if (searchType === 'overdue' || searchType === 'all') {
       const overdue = await findOverdueMaterials(childSubjectIds);
       if (overdue.length > 0) {
-        results.push(`🚨 **${overdue.length} Overdue Assignments:**`);
+        results.push(`🚨 **Overdue Assignments (${overdue.length}):**`);
         overdue.forEach((item: any) => {
-          results.push(`- ${item.title} - Due: ${item.due_date}`);
+          const subjectName = item.child_subject?.subject?.name || 
+                             item.child_subject?.custom_subject_name_override || 'Unknown';
+          const contentType = item.content_type ? ` [${item.content_type}]` : '';
+          results.push(`- **${item.title}**${contentType} (${subjectName}) - Due: ${item.due_date}`);
+          if (item.lesson?.title) {
+            results.push(`  Related to: ${item.lesson.title}`);
+          }
         });
+        results.push('');
+      }
+    }
+
+    if (searchType === 'tests' || searchType === 'quizzes' || searchType === 'all') {
+      const testsQuizzes = await findTestsAndQuizzes(childSubjectIds);
+      if (testsQuizzes.length > 0) {
+        const upcoming = testsQuizzes.filter((t: any) => !t.completed_at);
+        const completed = testsQuizzes.filter((t: any) => t.completed_at);
+        
+        if (upcoming.length > 0) {
+          results.push(`📝 **Upcoming Tests & Quizzes (${upcoming.length}):**`);
+          upcoming.forEach((item: any) => {
+            const subjectName = item.child_subject?.subject?.name || 
+                               item.child_subject?.custom_subject_name_override || 'Unknown';
+            const type = item.content_type === 'test' ? '📋 Test' : '❓ Quiz';
+            const dueInfo = item.due_date ? ` - Due: ${item.due_date}` : '';
+            results.push(`- ${type}: **${item.title}** (${subjectName})${dueInfo}`);
+          });
+          results.push('');
+        }
+        
+        if (completed.length > 0) {
+          results.push(`✅ **Completed Tests & Quizzes (Recent):**`);
+          completed.slice(0, 5).forEach((item: any) => {
+            const subjectName = item.child_subject?.subject?.name || 
+                               item.child_subject?.custom_subject_name_override || 'Unknown';
+            const type = item.content_type === 'test' ? 'Test' : 'Quiz';
+            let gradeInfo = '';
+            if (item.grade_value && item.grade_max_value) {
+              const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
+              gradeInfo = ` - Score: ${percentage}%`;
+            }
+            results.push(`- ${type}: ${item.title} (${subjectName})${gradeInfo}`);
+          });
+          results.push('');
+        }
+      }
+    }
+
+    if (searchType === 'worksheets' || searchType === 'all') {
+      const worksheets = await findWorksheets(childSubjectIds);
+      if (worksheets.length > 0) {
+        const incomplete = worksheets.filter((w: any) => !w.completed_at);
+        if (incomplete.length > 0) {
+          results.push(`📄 **Worksheets to Complete (${incomplete.length}):**`);
+          incomplete.slice(0, 5).forEach((item: any) => {
+            const subjectName = item.child_subject?.subject?.name || 
+                               item.child_subject?.custom_subject_name_override || 'Unknown';
+            const dueInfo = item.due_date ? ` - Due: ${item.due_date}` : '';
+            results.push(`- **${item.title}** (${subjectName})${dueInfo}`);
+            if (item.lesson?.title) {
+              results.push(`  From lesson: ${item.lesson.title}`);
+            }
+          });
+          results.push('');
+        }
+      }
+    }
+
+    if (searchType === 'study_materials' || searchType === 'all') {
+      const studyMaterials = await findStudyMaterials(childSubjectIds);
+      if (studyMaterials.length > 0) {
+        results.push(`📖 **Study Materials Available:**`);
+        studyMaterials.slice(0, 5).forEach((item: any) => {
+          const subjectName = item.child_subject?.subject?.name || 
+                             item.child_subject?.custom_subject_name_override || 'Unknown';
+          const type = item.content_type === 'notes' ? '📝 Notes' : '📖 Reading';
+          results.push(`- ${type}: **${item.title}** (${subjectName})`);
+        });
+        results.push('');
       }
     }
 
     if (searchType === 'grades' || searchType === 'all') {
       const graded = await findGradedMaterials(childSubjectIds);
       if (graded.length > 0) {
-        results.push(`\n📊 **Recent Grades:**`);
+        results.push(`📊 **Recent Grades:**`);
         graded.forEach((item: any) => {
           const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
-          results.push(`- ${item.title} - ${item.grade_value}/${item.grade_max_value} (${percentage}%)`);
+          const contentType = item.content_type ? ` [${item.content_type}]` : '';
+          results.push(`- ${item.title}${contentType} - ${item.grade_value}/${item.grade_max_value} (${percentage}%)`);
         });
+        results.push('');
       }
     }
 
-    if (searchType === 'subjects' || searchType === 'all') {
-      results.push(`\n🎓 **Enrolled Subjects:**`);
+    if (searchType === 'subjects') {
+      results.push(`🎓 **Enrolled Subjects:**`);
       childSubjects.forEach((subject: any) => {
         const name = subject.subject?.name || subject.custom_subject_name_override || 'Unknown Subject';
         results.push(`- ${name}`);
       });
+    }
+
+    // Add summary at the end for 'all' searches
+    if (searchType === 'all' && results.length > 0) {
+      results.push('\n📊 **Summary:** The AI tutor now has access to your complete curriculum including lessons, assignments, tests, quizzes, worksheets, and study materials.');
     }
 
     return results.length > 0 ? results.join('\n') : 'No results found.';
@@ -372,7 +473,14 @@ async function findOverdueMaterials(childSubjectIds: string[]) {
     
     const { data, error } = await supabase
       .from('materials')
-      .select('id, title, due_date, completed_at')
+      .select(`
+        id, title, due_date, completed_at, content_type,
+        lesson:lesson_id(id, title, description),
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
       .in('child_subject_id', childSubjectIds)
       .lt('due_date', today)
       .is('completed_at', null)
@@ -390,7 +498,14 @@ async function findGradedMaterials(childSubjectIds: string[]) {
   try {
     const { data, error } = await supabase
       .from('materials')
-      .select('id, title, grade_value, grade_max_value, completed_at')
+      .select(`
+        id, title, grade_value, grade_max_value, completed_at, content_type,
+        lesson:lesson_id(id, title),
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
       .in('child_subject_id', childSubjectIds)
       .not('grade_value', 'is', null)
       .not('grade_max_value', 'is', null)
@@ -399,6 +514,120 @@ async function findGradedMaterials(childSubjectIds: string[]) {
 
     return data || [];
   } catch (error) {
+    return [];
+  }
+}
+
+// Find lessons for the student
+async function findLessons(childSubjectIds: string[]) {
+  try {
+    // First get units for these child subjects
+    const { data: units, error: unitsError } = await supabase
+      .from('units')
+      .select('id')
+      .in('child_subject_id', childSubjectIds);
+
+    if (unitsError || !units || units.length === 0) {
+      return [];
+    }
+
+    const unitIds = units.map(u => u.id);
+
+    // Now get lessons for these units
+    const { data, error } = await supabase
+      .from('lessons')
+      .select(`
+        id, title, description, lesson_number, sequence_order, lesson_json,
+        unit:unit_id(
+          id, name,
+          child_subject:child_subject_id(
+            subject:subject_id(name),
+            custom_subject_name_override
+          )
+        )
+      `)
+      .in('unit_id', unitIds)
+      .order('sequence_order', { ascending: true })
+      .limit(20);
+
+    return data || [];
+  } catch (error) {
+    console.error('Error finding lessons:', error);
+    return [];
+  }
+}
+
+// Find tests and quizzes
+async function findTestsAndQuizzes(childSubjectIds: string[]) {
+  try {
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, due_date, completed_at, content_type, grade_value, grade_max_value,
+        lesson:lesson_id(id, title),
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['test', 'quiz'])
+      .order('due_date', { ascending: false, nullsFirst: false })
+      .limit(15);
+
+    return data || [];
+  } catch (error) {
+    console.error('Error finding tests/quizzes:', error);
+    return [];
+  }
+}
+
+// Find worksheets
+async function findWorksheets(childSubjectIds: string[]) {
+  try {
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, due_date, completed_at, content_type, grade_value, grade_max_value,
+        lesson:lesson_id(id, title),
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .eq('content_type', 'worksheet')
+      .order('created_at', { ascending: false })
+      .limit(15);
+
+    return data || [];
+  } catch (error) {
+    console.error('Error finding worksheets:', error);
+    return [];
+  }
+}
+
+// Find study materials (notes and reading materials)
+async function findStudyMaterials(childSubjectIds: string[]) {
+  try {
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, content_type, created_at,
+        lesson:lesson_id(id, title),
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['notes', 'reading_material'])
+      .order('created_at', { ascending: false })
+      .limit(15);
+
+    return data || [];
+  } catch (error) {
+    console.error('Error finding study materials:', error);
     return [];
   }
 }
