@@ -70,7 +70,7 @@ app.get('/', (req: Request, res: Response) => {
         <ul>
           <li><a href="/health">GET /health</a> - Health check</li>
           <li><strong>GET /sse</strong> - MCP SSE connection</li>
-          <li><strong>POST /messages</strong> - MCP JSON-RPC messages</li>
+          <li><strong>POST /messages</strong> - MCPs JSON-RPC messages</li>
         </ul>
 
         <h2>For Claude.ai:</h2>
