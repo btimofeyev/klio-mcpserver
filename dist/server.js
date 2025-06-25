@@ -517,7 +517,7 @@ async function findAllMaterials(childSubjectIds) {
         const { data, error } = await supabase
             .from('materials')
             .select(`
-        id, title, due_date, created_at, content_type, lesson_json, tasks_or_questions,
+        id, title, due_date, created_at, content_type, lesson_json,
         child_subject:child_subject_id(
           subject:subject_id(name),
           custom_subject_name_override
@@ -536,7 +536,7 @@ async function findAllMaterials(childSubjectIds) {
         if (data && data.length > 0) {
             return data.map(material => ({
                 ...material,
-                parsed_content: parseLessonContent(material.lesson_json, material.tasks_or_questions)
+                parsed_content: parseLessonContent(material.lesson_json)
             }));
         }
         return data || [];
@@ -547,22 +547,9 @@ async function findAllMaterials(childSubjectIds) {
     }
 }
 // Parse lesson JSON content and extract student-appropriate information
-function parseLessonContent(lessonJson, tasksOrQuestions = null) {
+function parseLessonContent(lessonJson) {
     // Handle cases where lessonJson might be null or not an object
     if (!lessonJson || typeof lessonJson !== 'object') {
-        // If we have tasks_or_questions but no lesson JSON, still try to parse questions
-        if (tasksOrQuestions && Array.isArray(tasksOrQuestions)) {
-            const formattedQuestions = formatQuestions(tasksOrQuestions);
-            if (formattedQuestions.length > 0) {
-                return {
-                    learning_objectives: null,
-                    content_summary: null,
-                    keywords: null,
-                    difficulty_level: null,
-                    formatted_questions: formattedQuestions
-                };
-            }
-        }
         return null;
     }
     try {
@@ -589,9 +576,9 @@ function parseLessonContent(lessonJson, tasksOrQuestions = null) {
         if (lessonJson.difficulty_level_suggestion) {
             parsed.difficulty_level = lessonJson.difficulty_level_suggestion;
         }
-        // Extract and format questions from tasks_or_questions (handles null/undefined/empty arrays)
-        if (tasksOrQuestions && Array.isArray(tasksOrQuestions) && tasksOrQuestions.length > 0) {
-            const formattedQuestions = formatQuestions(tasksOrQuestions);
+        // Extract and format questions from lesson_json.tasks_or_questions
+        if (lessonJson.tasks_or_questions && Array.isArray(lessonJson.tasks_or_questions) && lessonJson.tasks_or_questions.length > 0) {
+            const formattedQuestions = formatQuestions(lessonJson.tasks_or_questions);
             if (formattedQuestions.length > 0) {
                 parsed.formatted_questions = formattedQuestions;
             }
