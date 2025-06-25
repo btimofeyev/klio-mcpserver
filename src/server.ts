@@ -382,6 +382,14 @@ async function searchDatabase(childId: string, query: string, searchType: string
             if (content.difficulty_level) {
               results.push(`  📊 Level: ${content.difficulty_level}`);
             }
+            
+            // Add formatted questions (the key enhancement!)
+            if (content.formatted_questions && content.formatted_questions.length > 0) {
+              results.push(`  ❓ Questions to practice:`);
+              content.formatted_questions.forEach((question: string) => {
+                results.push(`     ${question}`);
+              });
+            }
           }
         });
         results.push('');
@@ -569,7 +577,7 @@ async function findAllMaterials(childSubjectIds: string[]) {
     const { data, error } = await supabase
       .from('materials')
       .select(`
-        id, title, due_date, created_at, content_type, lesson_json,
+        id, title, due_date, created_at, content_type, lesson_json, tasks_or_questions,
         child_subject:child_subject_id(
           subject:subject_id(name),
           custom_subject_name_override
@@ -591,7 +599,7 @@ async function findAllMaterials(childSubjectIds: string[]) {
     if (data && data.length > 0) {
       return data.map(material => ({
         ...material,
-        parsed_content: parseLessonContent(material.lesson_json)
+        parsed_content: parseLessonContent(material.lesson_json, material.tasks_or_questions)
       }));
     }
 
@@ -603,17 +611,38 @@ async function findAllMaterials(childSubjectIds: string[]) {
 }
 
 // Parse lesson JSON content and extract student-appropriate information
-function parseLessonContent(lessonJson: any) {
+function parseLessonContent(lessonJson: any, tasksOrQuestions: any = null) {
+  // Handle cases where lessonJson might be null or not an object
   if (!lessonJson || typeof lessonJson !== 'object') {
+    // If we have tasks_or_questions but no lesson JSON, still try to parse questions
+    if (tasksOrQuestions && Array.isArray(tasksOrQuestions)) {
+      const formattedQuestions = formatQuestions(tasksOrQuestions);
+      if (formattedQuestions.length > 0) {
+        return {
+          learning_objectives: null as string[] | null,
+          content_summary: null as string | null,
+          keywords: null as string[] | null,
+          difficulty_level: null as string | null,
+          formatted_questions: formattedQuestions as string[] | null
+        };
+      }
+    }
     return null;
   }
 
   try {
-    const parsed = {
+    const parsed: {
+      learning_objectives: string[] | null,
+      content_summary: string | null,
+      keywords: string[] | null,
+      difficulty_level: string | null,
+      formatted_questions: string[] | null
+    } = {
       learning_objectives: null,
       content_summary: null,
       keywords: null,
-      difficulty_level: null
+      difficulty_level: null,
+      formatted_questions: null
     };
 
     // Extract learning objectives
@@ -636,11 +665,76 @@ function parseLessonContent(lessonJson: any) {
       parsed.difficulty_level = lessonJson.difficulty_level_suggestion;
     }
 
+    // Extract and format questions from tasks_or_questions (handles null/undefined/empty arrays)
+    if (tasksOrQuestions && Array.isArray(tasksOrQuestions) && tasksOrQuestions.length > 0) {
+      const formattedQuestions = formatQuestions(tasksOrQuestions);
+      if (formattedQuestions.length > 0) {
+        parsed.formatted_questions = formattedQuestions;
+      }
+    }
+
     return parsed;
   } catch (error) {
     console.error('❌ Error parsing lesson content:', error);
     return null;
   }
+}
+
+// Format questions for AI tutor consumption
+function formatQuestions(tasksOrQuestions: string[]): string[] {
+  if (!Array.isArray(tasksOrQuestions) || tasksOrQuestions.length === 0) {
+    return [];
+  }
+
+  const formattedQuestions: string[] = [];
+  let questionNumber = 1;
+
+  // Take first 5 questions to avoid overwhelming AI context
+  const questionsToProcess = tasksOrQuestions.slice(0, 5);
+  
+  for (const item of questionsToProcess) {
+    // Skip non-string items or empty items
+    if (typeof item !== 'string' || !item.trim()) {
+      continue;
+    }
+    
+    const cleanItem = item.trim();
+    
+    // Skip generic instructions like "Solve each problem."
+    if (cleanItem.toLowerCase().includes('solve') && 
+        cleanItem.toLowerCase().includes('problem') && 
+        cleanItem.length < 30) {
+      continue;
+    }
+    
+    // Skip empty or very short items that aren't meaningful
+    if (cleanItem.length < 3) {
+      continue;
+    }
+    
+    // Look for numbered questions (e.g., "1. 793 × 27 = ____")
+    const numberedMatch = cleanItem.match(/^(\d+)\.\s*(.+)/);
+    if (numberedMatch) {
+      const questionContent = numberedMatch[2]
+        .replace(/=\s*_{4,}/g, '= ?')  // Replace multiple underscores with ?
+        .replace(/=\s*_+\s*$/g, '= ?') // Replace trailing underscores with ?
+        .trim();
+      
+      if (questionContent.length > 0) {
+        formattedQuestions.push(`Question ${numberedMatch[1]}: ${questionContent}`);
+      }
+    } else {
+      // For non-numbered items, add our own numbering
+      const processedItem = cleanItem
+        .replace(/=\s*_{4,}/g, '= ?')
+        .replace(/=\s*_+\s*$/g, '= ?');
+      
+      formattedQuestions.push(`Question ${questionNumber}: ${processedItem}`);
+      questionNumber++;
+    }
+  }
+
+  return formattedQuestions;
 }
 
 // Find tests and quizzes
