@@ -207,7 +207,7 @@ async function handleMCPMessage(message: any): Promise<any | null> {
                   },
                   search_type: {
                     type: 'string',
-                    enum: ['assignments', 'grades', 'subjects', 'overdue', 'recent', 'lessons', 'tests', 'quizzes', 'worksheets', 'study_materials', 'all'],
+                    enum: ['assignments', 'incomplete_assignments', 'completed_assignments', 'grades', 'subjects', 'overdue', 'recent', 'lessons', 'tests', 'quizzes', 'worksheets', 'study_materials', 'debug_completion_status', 'all'],
                     description: 'Type of search to perform',
                     default: 'all'
                   }
@@ -333,31 +333,86 @@ async function searchDatabase(childId: string, query: string, searchType: string
     let results = [];
 
     // Handle specific search types
-    if (searchType === 'lessons' || searchType === 'all') {
-      const allMaterials = await findAllMaterials(childSubjectIds);
-      if (allMaterials.length > 0) {
-        results.push(`📚 **Educational Materials (${allMaterials.length}):**`);
-        allMaterials.forEach((material: any) => {
+    if (searchType === 'assignments' || searchType === 'incomplete_assignments' || searchType === 'all') {
+      const incompleteAssignments = await findIncompleteAssignments(childSubjectIds);
+      if (incompleteAssignments.length > 0) {
+        results.push(`📝 **Current Assignments (${incompleteAssignments.length}):**`);
+        incompleteAssignments.forEach((material: any) => {
           const subjectName = material.child_subject?.subject?.name || 
                              material.child_subject?.custom_subject_name_override || 'General';
           const dueInfo = material.due_date ? ` - Due: ${material.due_date}` : '';
+          const contentType = material.content_type ? ` [${material.content_type}]` : '';
+          
+          // Add status indicators
+          let statusIcon = '📝';
+          let statusText = '';
+          if (material.due_date) {
+            const dueDate = new Date(material.due_date);
+            const today = new Date();
+            const timeDiff = dueDate.getTime() - today.getTime();
+            const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
+            
+            if (daysDiff < 0) {
+              statusIcon = '🚨';
+              statusText = ' (OVERDUE)';
+            } else if (daysDiff === 0) {
+              statusIcon = '⚠️';
+              statusText = ' (DUE TODAY)';
+            } else if (daysDiff === 1) {
+              statusIcon = '⏰';
+              statusText = ' (DUE TOMORROW)';
+            }
+          }
+          
+          results.push(`- ${statusIcon} **${material.title}**${contentType} (${subjectName})${dueInfo}${statusText}`);
+        });
+        results.push('');
+      }
+    }
+
+    if (searchType === 'completed_assignments' || searchType === 'all') {
+      const completedAssignments = await findCompletedAssignments(childSubjectIds);
+      if (completedAssignments.length > 0) {
+        results.push(`✅ **Completed Assignments (Recent ${Math.min(completedAssignments.length, 10)}):**`);
+        completedAssignments.slice(0, 10).forEach((material: any) => {
+          const subjectName = material.child_subject?.subject?.name || 
+                             material.child_subject?.custom_subject_name_override || 'General';
+          const contentType = material.content_type ? ` [${material.content_type}]` : '';
+          
+          // Add grade information if available
+          let gradeInfo = '';
+          if (material.grade_value !== null && material.grade_max_value !== null) {
+            const percentage = Math.round((material.grade_value / material.grade_max_value) * 100);
+            const gradeEmoji = percentage >= 90 ? '🅰️' : percentage >= 80 ? '🅱️' : percentage >= 70 ? '🅲️' : percentage >= 60 ? '🅳️' : '❌';
+            gradeInfo = ` - ${gradeEmoji} ${material.grade_value}/${material.grade_max_value} (${percentage}%)`;
+          }
+          
+          const completedDate = new Date(material.completed_at).toLocaleDateString();
+          results.push(`- ✅ **${material.title}**${contentType} (${subjectName}) - Completed: ${completedDate}${gradeInfo}`);
+        });
+        results.push('');
+      }
+    }
+
+    if (searchType === 'lessons' || searchType === 'all') {
+      const allLessons = await findLessonsAndStudyMaterials(childSubjectIds);
+      if (allLessons.length > 0) {
+        results.push(`📚 **Lessons & Study Materials (${allLessons.length}):**`);
+        allLessons.forEach((material: any) => {
+          const subjectName = material.child_subject?.subject?.name || 
+                             material.child_subject?.custom_subject_name_override || 'General';
           
           // Add content type icon
           let icon = '📚';
           switch(material.content_type) {
             case 'lesson': icon = '📚'; break;
-            case 'assignment': icon = '📝'; break;
-            case 'worksheet': icon = '📄'; break;
-            case 'quiz': icon = '❓'; break;
-            case 'test': icon = '📋'; break;
             case 'notes': icon = '📝'; break;
             case 'reading_material': icon = '📖'; break;
             default: icon = '📋'; break;
           }
           
-          // Add basic material info with type
           const typeLabel = material.content_type ? ` [${material.content_type}]` : '';
-          results.push(`- ${icon} **${material.title}**${typeLabel} (${subjectName})${dueInfo}`);
+          results.push(`- ${icon} **${material.title}**${typeLabel} (${subjectName})`);
           
           // Add parsed content if available (mainly for lessons)
           if (material.parsed_content) {
@@ -486,12 +541,54 @@ async function searchDatabase(childId: string, query: string, searchType: string
     if (searchType === 'grades' || searchType === 'all') {
       const graded = await findGradedMaterials(childSubjectIds);
       if (graded.length > 0) {
-        results.push(`📊 **Recent Grades:**`);
+        results.push(`📊 **Recent Grades (${graded.length}):**`);
+        
+        // Calculate overall statistics
+        let totalEarned = 0;
+        let totalPossible = 0;
+        const gradesBySubject: { [key: string]: { earned: number, possible: number, count: number, grades: any[] } } = {};
+        
         graded.forEach((item: any) => {
+          const subjectName = item.child_subject?.subject?.name || 
+                             item.child_subject?.custom_subject_name_override || 'General';
           const percentage = Math.round((item.grade_value / item.grade_max_value) * 100);
           const contentType = item.content_type ? ` [${item.content_type}]` : '';
-          results.push(`- ${item.title}${contentType} - ${item.grade_value}/${item.grade_max_value} (${percentage}%)`);
+          
+          // Grade emoji based on percentage
+          const gradeEmoji = percentage >= 90 ? '🅰️' : percentage >= 80 ? '🅱️' : percentage >= 70 ? '🆔' : percentage >= 60 ? '🆘' : '❌';
+          
+          results.push(`- ${gradeEmoji} **${item.title}**${contentType} (${subjectName}) - ${item.grade_value}/${item.grade_max_value} (${percentage}%)`);
+          
+          // Track for statistics
+          totalEarned += parseFloat(item.grade_value);
+          totalPossible += parseFloat(item.grade_max_value);
+          
+          if (!gradesBySubject[subjectName]) {
+            gradesBySubject[subjectName] = { earned: 0, possible: 0, count: 0, grades: [] };
+          }
+          gradesBySubject[subjectName].earned += parseFloat(item.grade_value);
+          gradesBySubject[subjectName].possible += parseFloat(item.grade_max_value);
+          gradesBySubject[subjectName].count++;
+          gradesBySubject[subjectName].grades.push(percentage);
         });
+        
+        // Show overall average
+        if (totalPossible > 0) {
+          const overallAverage = Math.round((totalEarned / totalPossible) * 100);
+          const overallEmoji = overallAverage >= 90 ? '🅰️' : overallAverage >= 80 ? '🅱️' : overallAverage >= 70 ? '🆔' : overallAverage >= 60 ? '🆘' : '❌';
+          results.push(`\n📈 **Overall Average**: ${overallEmoji} ${overallAverage}% (${totalEarned.toFixed(1)}/${totalPossible.toFixed(1)} points)`);
+        }
+        
+        // Show subject averages if multiple subjects
+        if (Object.keys(gradesBySubject).length > 1) {
+          results.push(`\n📚 **By Subject:**`);
+          for (const [subject, data] of Object.entries(gradesBySubject)) {
+            const subjectAverage = Math.round((data.earned / data.possible) * 100);
+            const subjectEmoji = subjectAverage >= 90 ? '🅰️' : subjectAverage >= 80 ? '🅱️' : subjectAverage >= 70 ? '🆔' : subjectAverage >= 60 ? '🆘' : '❌';
+            results.push(`- ${subjectEmoji} **${subject}**: ${subjectAverage}% (${data.count} assignments)`);
+          }
+        }
+        
         results.push('');
       }
     }
@@ -504,9 +601,19 @@ async function searchDatabase(childId: string, query: string, searchType: string
       });
     }
 
+    if (searchType === 'debug_completion_status') {
+      const debugInfo = await debugCompletionStatus(childSubjectIds);
+      results.push(`🔍 **Assignment Completion Status Debug:**`);
+      debugInfo.forEach((item: any) => {
+        const status = item.completed_at ? `✅ COMPLETED (${new Date(item.completed_at).toLocaleDateString()})` : `📝 INCOMPLETE`;
+        const gradeInfo = item.grade_value ? ` - Grade: ${item.grade_value}/${item.grade_max_value}` : ' - No grade';
+        results.push(`- **${item.title}** ${status}${gradeInfo}`);
+      });
+    }
+
     // Add summary at the end for 'all' searches
     if (searchType === 'all' && results.length > 0) {
-      results.push('\n📊 **Summary:** The AI tutor now has access to your complete curriculum including lessons, assignments, tests, quizzes, worksheets, and study materials.');
+      results.push('\n📊 **Summary:** The AI tutor now has access to your complete curriculum. ✅ Completed assignments show grades and are separated from current work. 📝 Current assignments show due dates and urgency status. 📚 Study materials and lessons are available for review.');
     }
 
     return results.length > 0 ? results.join('\n') : 'No results found.';
@@ -516,7 +623,7 @@ async function searchDatabase(childId: string, query: string, searchType: string
   }
 }
 
-// Find overdue materials
+// Find overdue materials (only incomplete assignments)
 async function findOverdueMaterials(childSubjectIds: string[]) {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -532,13 +639,16 @@ async function findOverdueMaterials(childSubjectIds: string[]) {
         )
       `)
       .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['assignment', 'worksheet', 'quiz', 'test']) // Only graded materials
       .lt('due_date', today)
-      .is('completed_at', null)
+      .is('completed_at', null) // Only incomplete assignments
       .order('due_date', { ascending: true })
       .limit(10);
 
+    console.error('🚨 Overdue materials query result:', { data, error, count: data?.length });
     return data || [];
   } catch (error) {
+    console.error('❌ Error finding overdue materials:', error);
     return [];
   }
 }
@@ -568,12 +678,70 @@ async function findGradedMaterials(childSubjectIds: string[]) {
   }
 }
 
-// Find all educational materials for the student
-async function findAllMaterials(childSubjectIds: string[]) {
+// Find incomplete assignments (current work)
+async function findIncompleteAssignments(childSubjectIds: string[]) {
   try {
-    console.error('🔍 Finding all materials for child_subject_ids:', childSubjectIds);
+    console.error('📝 Finding incomplete assignments for child_subject_ids:', childSubjectIds);
     
-    // Look for all educational materials with various content types
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, due_date, created_at, content_type, completed_at,
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['assignment', 'worksheet', 'quiz', 'test'])
+      .is('completed_at', null)
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .limit(20);
+
+    console.error('📝 Incomplete assignments query result:', { data, error, count: data?.length });
+
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error finding incomplete assignments:', error);
+    return [];
+  }
+}
+
+// Find completed assignments with grades
+async function findCompletedAssignments(childSubjectIds: string[]) {
+  try {
+    console.error('✅ Finding completed assignments for child_subject_ids:', childSubjectIds);
+    
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, due_date, completed_at, content_type, grade_value, grade_max_value,
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['assignment', 'worksheet', 'quiz', 'test'])
+      .not('completed_at', 'is', null)
+      .order('completed_at', { ascending: false })
+      .limit(15);
+
+    console.error('✅ Completed assignments query result:', { data, error, count: data?.length });
+
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error finding completed assignments:', error);
+    return [];
+  }
+}
+
+// Find lessons and study materials (non-graded content)
+async function findLessonsAndStudyMaterials(childSubjectIds: string[]) {
+  try {
+    console.error('📚 Finding lessons and study materials for child_subject_ids:', childSubjectIds);
+    
     const { data, error } = await supabase
       .from('materials')
       .select(`
@@ -584,14 +752,14 @@ async function findAllMaterials(childSubjectIds: string[]) {
         )
       `)
       .in('child_subject_id', childSubjectIds)
-      .in('content_type', ['lesson', 'assignment', 'worksheet', 'quiz', 'test', 'notes', 'reading_material', 'other'])
+      .in('content_type', ['lesson', 'notes', 'reading_material', 'other'])
       .order('created_at', { ascending: true })
-      .limit(30);
+      .limit(25);
 
-    console.error('📚 All materials query result:', { data, error, count: data?.length });
+    console.error('📚 Lessons query result:', { data, error, count: data?.length });
 
     if (error) {
-      console.error('❌ Error in all materials query:', error);
+      console.error('❌ Error in lessons query:', error);
       return [];
     }
 
@@ -605,7 +773,7 @@ async function findAllMaterials(childSubjectIds: string[]) {
 
     return data || [];
   } catch (error) {
-    console.error('❌ Error finding all materials:', error);
+    console.error('❌ Error finding lessons and study materials:', error);
     return [];
   }
 }
@@ -795,6 +963,34 @@ async function findStudyMaterials(childSubjectIds: string[]) {
     return data || [];
   } catch (error) {
     console.error('Error finding study materials:', error);
+    return [];
+  }
+}
+
+// Debug completion status for all assignments
+async function debugCompletionStatus(childSubjectIds: string[]) {
+  try {
+    console.error('🔍 Debug: Finding all assignments for completion status check');
+    
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, completed_at, grade_value, grade_max_value, due_date, content_type,
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['assignment', 'worksheet', 'quiz', 'test'])
+      .order('created_at', { ascending: true })
+      .limit(50);
+
+    console.error('🔍 Debug query result:', { data, error, count: data?.length });
+
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error in debug completion status:', error);
     return [];
   }
 }
