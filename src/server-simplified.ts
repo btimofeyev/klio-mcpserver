@@ -59,7 +59,7 @@ async function getMaterials(childSubjectIds: string[], filters: MaterialFilters 
     .from('materials')
     .select(`
       id, title, due_date, completed_at, content_type, grade_value, grade_max_value,
-      lesson(id, title, description),
+      lessons:lesson_id(id, title, description),
       child_subject:child_subject_id(
         subject:subject_id(name),
         custom_subject_name_override
