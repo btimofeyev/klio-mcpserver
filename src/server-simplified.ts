@@ -362,15 +362,34 @@ async function handleGetSubjectContext(childId: string, subjectName: string): Pr
   try {
     const { data: childSubjects, error: subjectError } = await supabase
       .from('child_subjects')
-      .select('id')
-      .eq('child_id', childId)
-      .or(`subject.name.ilike.%${subjectName}%, custom_subject_name_override.ilike.%${subjectName}%`);
+      .select(`
+        id,
+        custom_subject_name_override,
+        subject:subject_id(name)
+      `)
+      .eq('child_id', childId);
 
     if (subjectError || !childSubjects || childSubjects.length === 0) {
+      return `No subjects enrolled for this student.`;
+    }
+
+    // Filter for matching subject
+    const matchingSubjects = childSubjects.filter((cs: any) => {
+      const customName = cs.custom_subject_name_override?.toLowerCase() || '';
+      const originalName = cs.subject?.name?.toLowerCase() || '';
+      const searchName = subjectName.toLowerCase();
+      
+      return customName.includes(searchName) || 
+             originalName.includes(searchName) ||
+             (originalName.includes('mathematics') && searchName.includes('math')) ||
+             (originalName.includes('english') && (searchName.includes('ela') || searchName.includes('reading') || searchName.includes('writing')));
+    });
+
+    if (matchingSubjects.length === 0) {
       return `No ${subjectName} enrollment found for this student.`;
     }
 
-    const childSubjectIds = childSubjects.map(cs => cs.id);
+    const childSubjectIds = matchingSubjects.map((cs: any) => cs.id);
     const result = [`📚 **${subjectName} Overview:**`, ''];
 
     // Get incomplete work
