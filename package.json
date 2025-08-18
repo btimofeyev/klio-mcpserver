@@ -9,10 +9,10 @@
     },
     "scripts": {
         "build": "tsc",
-        "start": "node dist/server.js",
-        "start:railway": "node railway-start.js",
-        "start:local": "node dist/server.js",
-        "dev": "tsx src/server.ts",
+        "start": "node dist/server-simplified.js",
+        "start:railway": "node railway-start.js", 
+        "start:local": "node dist/server-simplified.js",
+        "dev": "tsx src/server-simplified.ts",
         "dev:railway": "tsx src/railway-server.ts",
         "test": "tsx test-connection.ts"
     },

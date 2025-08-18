@@ -637,18 +637,39 @@ async function searchDatabase(childId: string, query: string, searchType: string
       }
     }
 
-    if (searchType === 'overdue' || searchType === 'all') {
-      const overdue = await findOverdueMaterials(childSubjectIds);
-      if (overdue.length > 0) {
-        results.push(`🚨 **Overdue Assignments (${overdue.length}):**`);
-        overdue.forEach((item: any) => {
+    if (searchType === 'next_up' || searchType === 'all') {
+      const nextUpItems = await findNextUpMaterials(childSubjectIds);
+      if (nextUpItems.length > 0) {
+        results.push(`📝 **Next Up - Ready to Work On (${nextUpItems.length}):**`);
+        nextUpItems.forEach((item: any) => {
           const subjectName = item.child_subject?.subject?.name || 
                              item.child_subject?.custom_subject_name_override || 'Unknown';
           const contentType = item.content_type ? ` [${item.content_type}]` : '';
-          results.push(`- **${item.title}**${contentType} (${subjectName}) - Due: ${item.due_date}`);
+          results.push(`- **${item.title}**${contentType} (${subjectName}) - Scheduled: ${item.due_date}`);
           if (item.lesson?.title) {
             results.push(`  Related to: ${item.lesson.title}`);
           }
+        });
+        results.push('');
+      }
+    }
+
+    if (searchType === 'performance_review' || searchType === 'all') {
+      const lowScoreItems = await findLowPerformanceItems(childSubjectIds);
+      if (lowScoreItems.length > 0) {
+        results.push(`📈 **Items Worth Reviewing (Low Scores):**`);
+        lowScoreItems.forEach((item: any) => {
+          const subjectName = item.child_subject?.subject?.name || 
+                             item.child_subject?.custom_subject_name_override || 'Unknown';
+          const contentType = item.content_type ? ` [${item.content_type}]` : '';
+          const percentage = item.grade_value && item.grade_max_value ? 
+            Math.round((item.grade_value / item.grade_max_value) * 100) : 0;
+          let suggestion = '';
+          if (percentage < 50) suggestion = ' - Needs significant review';
+          else if (percentage < 70) suggestion = ' - Could use more practice';
+          else suggestion = ' - Room for improvement';
+          
+          results.push(`- **${item.title}**${contentType} (${subjectName}) - ${percentage}%${suggestion}`);
         });
         results.push('');
       }
@@ -809,11 +830,9 @@ async function searchDatabase(childId: string, query: string, searchType: string
   }
 }
 
-// Find overdue materials (only incomplete assignments)
-async function findOverdueMaterials(childSubjectIds: string[]) {
+// Find next materials to work on (incomplete assignments in order)
+async function findNextUpMaterials(childSubjectIds: string[]) {
   try {
-    const today = new Date().toISOString().split('T')[0];
-    
     const { data, error } = await supabase
       .from('materials')
       .select(`
@@ -826,15 +845,51 @@ async function findOverdueMaterials(childSubjectIds: string[]) {
       `)
       .in('child_subject_id', childSubjectIds)
       .in('content_type', ['assignment', 'worksheet', 'quiz', 'test']) // Only graded materials
-      .lt('due_date', today)
       .is('completed_at', null) // Only incomplete assignments
-      .order('due_date', { ascending: true })
+      .order('due_date', { ascending: true, nullsFirst: false })
       .limit(10);
 
-    console.error('🚨 Overdue materials query result:', { data, error, count: data?.length });
+    console.error('📝 Next up materials query result:', { data, error, count: data?.length });
     return data || [];
   } catch (error) {
-    console.error('❌ Error finding overdue materials:', error);
+    console.error('❌ Error finding next up materials:', error);
+    return [];
+  }
+}
+
+// Find materials with low performance scores for review
+async function findLowPerformanceItems(childSubjectIds: string[]) {
+  try {
+    const { data, error } = await supabase
+      .from('materials')
+      .select(`
+        id, title, grade_value, grade_max_value, completed_at, content_type,
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        )
+      `)
+      .in('child_subject_id', childSubjectIds)
+      .in('content_type', ['assignment', 'worksheet', 'quiz', 'test'])
+      .not('grade_value', 'is', null)
+      .not('grade_max_value', 'is', null)
+      .not('completed_at', 'is', null) // Only completed items with grades
+      .order('completed_at', { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+
+    // Filter for low performance (less than 85%)
+    const lowPerformanceItems = (data || []).filter((item: any) => {
+      if (!item.grade_value || !item.grade_max_value) return false;
+      const percentage = (item.grade_value / item.grade_max_value) * 100;
+      return percentage < 85;
+    }).slice(0, 10);
+
+    console.error('📈 Low performance items query result:', { count: lowPerformanceItems.length });
+    return lowPerformanceItems;
+  } catch (error) {
+    console.error('❌ Error finding low performance items:', error);
     return [];
   }
 }
@@ -1387,7 +1442,7 @@ async function getNextHomework(childId: string, subject?: string): Promise<strin
       const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
       
       if (daysDiff < 0) {
-        result.push(`🚨 **OVERDUE** - Was due: ${homework.due_date}`);
+        result.push(`📅 **Scheduled earlier** - Was scheduled: ${homework.due_date}`);
       } else if (daysDiff === 0) {
         result.push(`⚠️ **DUE TODAY** - ${homework.due_date}`);
       } else if (daysDiff === 1) {
@@ -1671,7 +1726,7 @@ async function getNextHomeworkDetails(childSubjectIds: string[]): Promise<string
     const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
     
     if (daysDiff < 0) {
-      result += ` 🚨 OVERDUE`;
+      result += ` 📅 (scheduled earlier)`;
     } else if (daysDiff === 0) {
       result += ` ⚠️ DUE TODAY`;
     } else if (daysDiff === 1) {
