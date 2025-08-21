@@ -220,17 +220,48 @@ async function handleGetMaterialContent(childId, materialIdentifier) {
             try {
                 const lessonData = typeof data.lesson_json === 'string' ?
                     JSON.parse(data.lesson_json) : data.lesson_json;
-                if (lessonData.content) {
+                const parsedContent = parseLessonContent(lessonData);
+                if (parsedContent) {
                     result.push('');
-                    result.push('**Content:**');
-                    result.push(lessonData.content);
+                    if (parsedContent.learning_objectives && parsedContent.learning_objectives.length > 0) {
+                        result.push('**Learning Objectives:**');
+                        parsedContent.learning_objectives.forEach((obj) => {
+                            result.push(`- ${obj}`);
+                        });
+                        result.push('');
+                    }
+                    if (parsedContent.content_summary) {
+                        result.push('**Content Summary:**');
+                        result.push(parsedContent.content_summary);
+                        result.push('');
+                    }
+                    if (parsedContent.keywords && parsedContent.keywords.length > 0) {
+                        result.push('**Key Concepts:**');
+                        result.push(parsedContent.keywords.join(', '));
+                        result.push('');
+                    }
+                    if (parsedContent.formatted_questions && parsedContent.formatted_questions.length > 0) {
+                        result.push('**Practice Questions:**');
+                        parsedContent.formatted_questions.forEach((question) => {
+                            result.push(`- ${question}`);
+                        });
+                        result.push('');
+                    }
                 }
-                if (lessonData.questions) {
-                    result.push('');
-                    result.push('**Questions/Tasks:**');
-                    lessonData.questions.forEach((q, i) => {
-                        result.push(`${i + 1}. ${q}`);
-                    });
+                else {
+                    // Fallback to simple parsing
+                    if (lessonData.content) {
+                        result.push('**Content:**');
+                        result.push(lessonData.content);
+                        result.push('');
+                    }
+                    if (lessonData.questions) {
+                        result.push('**Questions/Tasks:**');
+                        lessonData.questions.forEach((q, i) => {
+                            result.push(`${i + 1}. ${q}`);
+                        });
+                        result.push('');
+                    }
                 }
             }
             catch (parseError) {
@@ -466,6 +497,100 @@ app.post('/tool', async (req, res) => {
         return;
     }
 });
+// ===============================
+// LESSON CONTENT PARSING FUNCTIONS
+// ===============================
+// Parse lesson JSON content and extract student-appropriate information
+function parseLessonContent(lessonJson) {
+    // Handle cases where lessonJson might be null or not an object
+    if (!lessonJson || typeof lessonJson !== 'object') {
+        return null;
+    }
+    try {
+        const parsed = {
+            learning_objectives: null,
+            content_summary: null,
+            keywords: null,
+            difficulty_level: null,
+            formatted_questions: null
+        };
+        // Extract learning objectives
+        if (lessonJson.learning_objectives && Array.isArray(lessonJson.learning_objectives)) {
+            parsed.learning_objectives = lessonJson.learning_objectives;
+        }
+        // Extract content summary
+        if (lessonJson.main_content_summary_or_extract) {
+            parsed.content_summary = lessonJson.main_content_summary_or_extract;
+        }
+        // Extract keywords/subtopics
+        if (lessonJson.subject_keywords_or_subtopics && Array.isArray(lessonJson.subject_keywords_or_subtopics)) {
+            parsed.keywords = lessonJson.subject_keywords_or_subtopics;
+        }
+        // Extract difficulty level (for student confidence building)
+        if (lessonJson.difficulty_level_suggestion) {
+            parsed.difficulty_level = lessonJson.difficulty_level_suggestion;
+        }
+        // Extract and format questions from lesson_json.tasks_or_questions
+        if (lessonJson.tasks_or_questions && Array.isArray(lessonJson.tasks_or_questions) && lessonJson.tasks_or_questions.length > 0) {
+            const formattedQuestions = formatQuestions(lessonJson.tasks_or_questions);
+            if (formattedQuestions.length > 0) {
+                parsed.formatted_questions = formattedQuestions;
+            }
+        }
+        return parsed;
+    }
+    catch (error) {
+        console.error('❌ Error parsing lesson content:', error);
+        return null;
+    }
+}
+// Format questions for AI tutor consumption
+function formatQuestions(tasksOrQuestions) {
+    if (!Array.isArray(tasksOrQuestions) || tasksOrQuestions.length === 0) {
+        return [];
+    }
+    const formattedQuestions = [];
+    let questionNumber = 1;
+    // Take first 5 questions to avoid overwhelming AI context
+    const questionsToProcess = tasksOrQuestions.slice(0, 5);
+    for (const item of questionsToProcess) {
+        // Skip non-string items or empty items
+        if (typeof item !== 'string' || !item.trim()) {
+            continue;
+        }
+        const cleanItem = item.trim();
+        // Skip generic instructions like "Solve each problem."
+        if (cleanItem.toLowerCase().includes('solve') &&
+            cleanItem.toLowerCase().includes('problem') &&
+            cleanItem.length < 30) {
+            continue;
+        }
+        // Skip empty or very short items that aren't meaningful
+        if (cleanItem.length < 3) {
+            continue;
+        }
+        // Look for numbered questions (e.g., "1. 793 × 27 = ____")
+        const numberedMatch = cleanItem.match(/^(\d+)\.\s*(.+)/);
+        if (numberedMatch) {
+            const questionContent = numberedMatch[2]
+                .replace(/=\s*_{4,}/g, '= ?') // Replace multiple underscores with ?
+                .replace(/=\s*_+\s*$/g, '= ?') // Replace trailing underscores with ?
+                .trim();
+            if (questionContent.length > 0) {
+                formattedQuestions.push(`Question ${numberedMatch[1]}: ${questionContent}`);
+            }
+        }
+        else {
+            // For non-numbered items, add our own numbering
+            const processedItem = cleanItem
+                .replace(/=\s*_{4,}/g, '= ?')
+                .replace(/=\s*_+\s*$/g, '= ?');
+            formattedQuestions.push(`Question ${questionNumber}: ${processedItem}`);
+            questionNumber++;
+        }
+    }
+    return formattedQuestions;
+}
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Simplified MCP server running on port ${PORT}`);
