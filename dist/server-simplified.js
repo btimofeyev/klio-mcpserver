@@ -56,6 +56,13 @@ async function getMaterials(childSubjectIds, filters = {}) {
     if (filters.hasGrades) {
         query = query.not('grade_value', 'is', null).not('grade_max_value', 'is', null);
     }
+    // Add date filtering for recent work
+    if (filters.daysBack && filters.completed === true) {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - filters.daysBack);
+        const cutoffDateString = cutoffDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        query = query.gte('completed_at', cutoffDateString);
+    }
     query = query.order('due_date', { ascending: true, nullsFirst: false });
     if (filters.limit) {
         query = query.limit(filters.limit);
@@ -159,10 +166,20 @@ async function handleSearchDatabase(childId, query = '', searchType = 'all') {
                 filters: { types: ['assignment', 'worksheet', 'quiz', 'test'], completed: true, limit: 15 },
                 title: 'Completed Work',
                 icon: '✅'
+            },
+            completed_recent: {
+                filters: { types: ['assignment', 'worksheet', 'quiz', 'test'], completed: true, daysBack: 7, limit: 20 },
+                title: 'Recently Completed Work (Past Week)',
+                icon: '🎯'
+            },
+            current_chapter: {
+                filters: { types: ['lesson', 'reading', 'chapter'], completed: false, limit: 5 },
+                title: 'Current Chapter/Unit',
+                icon: '📖'
             }
         };
         const searchTypes = searchType === 'all' ?
-            ['next_up', 'performance_review', 'grades', 'tests'] :
+            ['next_up', 'performance_review', 'completed_recent', 'current_chapter'] :
             [searchType];
         for (const type of searchTypes) {
             const config = searchConfig[type];
