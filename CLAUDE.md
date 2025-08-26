@@ -53,6 +53,7 @@ The server offers two focused tools that distinguish between what students are l
 **Returns**: 
 - Assignment details with due dates and urgency indicators
 - Completion status and grades
+- Sample question preview for each item
 - Organized by incomplete vs. completed work
 - Visual indicators for overdue/due soon items
 
@@ -66,16 +67,41 @@ The server offers two focused tools that distinguish between what students are l
 }
 ```
 
+### 3. `get_material_details`
+**Purpose**: Get complete content for a specific educational material, including all questions and answers
+**Best for**: Deep dive into specific assignments or lessons when AI needs full context for tutoring
+
+**Parameters**:
+- `child_id` (required): Student UUID
+- `material_identifier` (required): Material title or UUID
+
+**Returns**:
+- Complete material information (title, subject, due dates, grades)
+- ALL questions/tasks for assignments and worksheets
+- Answer key (for completed work or lesson materials)
+- Learning objectives and key concepts
+- Related lesson content if it's an assignment
+- Teaching notes and methodology
+
+**Example Usage**:
+```json
+{
+  "child_id": "abc123...",
+  "material_identifier": "After Reading: The Friend Inside - Think & Discuss"
+}
+```
+
 ## Student Query Translation Guide
 
-| Student Says | Recommended Tool | Parameters |
-|-------------|------------------|-------------|
+| Student Says | Recommended Tool Flow | Parameters |
+|-------------|---------------------|-------------|
 | "What's my homework?" | `search_student_work` | `status: "incomplete"` |
-| "I need help with math" | `search_student_work` then `search_lessons` | First: `subject: "math", status: "incomplete"`<br/>Then: `query: [topic from assignment]` |
+| "I need help with math" | `search_student_work` → `get_material_details` | First: `subject: "math", status: "incomplete"`<br/>Then: `material_identifier: [assignment title]` |
 | "Let's review something" | `search_student_work` | `low_scores: true` or `status: "completed"` |
 | "What tests do I have?" | `search_student_work` | `content_type: "quiz"` or `content_type: "test"` |
-| "I don't understand fractions" | `search_lessons` | `query: "fractions"` |
-| "Help with my colonies worksheet" | `search_lessons` then `search_student_work` | First: `query: "colonies"`<br/>Then: `query: "colonies", content_type: "worksheet"` |
+| "I don't understand fractions" | `search_lessons` → `get_material_details` | First: `query: "fractions"`<br/>Then: `material_identifier: [lesson title]` |
+| "Help with my colonies worksheet" | `search_student_work` → `get_material_details` | First: `query: "colonies", content_type: "worksheet"`<br/>Then: `material_identifier: [worksheet title]` |
+| "What's the first question?" | `get_material_details` | `material_identifier: [current assignment title]` |
 | "What's due soon?" | `search_student_work` | `status: "due_soon"` |
 | "Show me my low grades" | `search_student_work` | `low_scores: true, status: "completed"` |
 
@@ -86,8 +112,10 @@ The server offers two focused tools that distinguish between what students are l
 📝 **Student Work Found:**
 
 **📋 Incomplete Work (2):**
-• **Algebra Practice Problems** [assignment] (Math) ⏰ **DUE TOMORROW**
+• **After Reading: The Friend Inside - Think & Discuss** [worksheet] (English) 🚨 **OVERDUE**
+  Preview: 1. What historical elements are in this story?
 • **Colonial America Essay** [assignment] (History) 📅 Due 2024-08-20
+  Preview: Write a 3-paragraph essay about colonial settlements
 
 **✅ Completed Work (3):**
 • **Linear Equations Worksheet** [worksheet] (Math) 🅰️ 95%
@@ -99,20 +127,41 @@ The server offers two focused tools that distinguish between what students are l
 ```
 📚 **Teaching Materials Found:**
 
-**Other New England Colonies Are Founded** (History)
+**The Friend Inside: Lessons 92-93** (English)
 **Learning Objectives:**
-• Explain the founding of Connecticut and Rhode Island
-• Describe the role of religious freedom in colonial expansion
-• Compare different colonial governments
-**Key Topics:** Roger Williams, Thomas Hooker, religious tolerance, colonial charters, Fundamental Orders
+• Identify elements of historical fiction in the story
+• Analyze how external and internal conflicts reveal character
+• Infer the theme of the story
+**Key Topics:** historical fiction, Civil War, Abraham Lincoln, conscience, character traits
+**Summary:** This lesson focuses on the short story "The Friend Inside" by T. Morris Longstreth and the poem "Nancy Hanks" by Rosemary Carr Benét...
+**Sample Questions:**
+• How reliable is my conscience?
+• Which historical figure appears in this story? (Abraham Lincoln)
+• What character traits are revealed by Jim's inner turmoil here?
 ---
+```
 
-**The Connecticut River Valley** (History)
+### Material Details Response
+```
+📚 **After Reading: The Friend Inside - Think & Discuss Questions**
+Subject: English | Type: worksheet
+Due Date: 2024-08-15 🚨 **OVERDUE**
+
 **Learning Objectives:**
-• Identify geographic factors in settlement patterns
-• Understand economic opportunities in the Connecticut valley
-**Key Topics:** fertile soil, river transportation, fur trade, Hartford settlement
----
+• Identify historical elements in a story
+• Compare fictional and nonfiction accounts
+• Analyze character traits through confrontations
+
+**All Questions:**
+1. What historical elements are in this story?
+2. How is this story's treatment of historical figures and events different from that of a nonfiction account?
+3. Identify two examples of idiom in the story.
+4. What do Jim's confrontations reveal about his character?
+5. What is the story's theme?
+6. Read 1 Corinthians 8:7; 1 Timothy 4:2; and Titus 1:15. According to biblical teaching, is your conscience reliable for determining the right thing to do? Why or why not?
+
+**Related Lesson:** The Friend Inside: Lessons 92-93
+**Lesson Context:** This lesson focuses on the short story "The Friend Inside" by T. Morris Longstreth featuring Jim Kaley, a young man who struggles with internal and external conflicts as he serves as a messenger for Abraham Lincoln during the Civil War...
 ```
 
 ## Tutoring Flow Recommendations
@@ -121,21 +170,29 @@ The server offers two focused tools that distinguish between what students are l
 When a student asks for help:
 - Use `search_student_work` to find what they need to work on
 - Look for overdue items, upcoming due dates, or specific assignments they mention
+- Note the preview questions shown in search results
 
-### 2. Get Teaching Context
-Once you know what assignment they need help with:
-- Use `search_lessons` with relevant topic keywords from the assignment
-- This gives you the teaching materials and learning objectives to help explain concepts
+### 2. Get Full Assignment Details  
+Once you identify the specific assignment:
+- Use `get_material_details` with the assignment title/ID
+- This gives you ALL questions, answer key, and learning objectives
+- Shows related lesson content for teaching context
 
-### 3. Provide Targeted Help
-With both student work and lesson context:
-- Reference the learning objectives when explaining concepts
-- Use the key topics from lessons to provide comprehensive explanations
-- Connect the lesson content to the specific assignment questions
+### 3. Get Additional Teaching Context (if needed)
+If you need more background on the topic:
+- Use `search_lessons` with relevant keywords from the assignment
+- Use `get_material_details` on the parent lesson for full teaching notes
 
-### 4. Track Progress
+### 4. Provide Targeted Help
+With complete material details:
+- Reference specific questions the student is working on
+- Use learning objectives to frame explanations
+- Connect lesson context to assignment questions
+- Provide step-by-step guidance based on teaching methodology
+
+### 5. Track Progress
 Use filters in `search_student_work`:
-- `low_scores: true` to identify areas needing more practice
+- `low_scores: true` to identify areas needing more practice  
 - `status: "completed"` to review what they've mastered
 - `status: "due_soon"` to prioritize urgent work
 

@@ -135,6 +135,17 @@ async function handleSearchLessons(childId: string, query: string = ''): Promise
           if (lessonData.subject_keywords_or_subtopics && lessonData.subject_keywords_or_subtopics.length > 0) {
             results.push(`**Key Topics:** ${lessonData.subject_keywords_or_subtopics.slice(0, 5).join(', ')}`);
           }
+          
+          if (lessonData.main_content_summary_or_extract) {
+            results.push(`**Summary:** ${lessonData.main_content_summary_or_extract.slice(0, 200)}...`);
+          }
+          
+          if (lessonData.tasks_or_questions && lessonData.tasks_or_questions.length > 0) {
+            results.push(`**Sample Questions:**`);
+            lessonData.tasks_or_questions.slice(0, 3).forEach((question: string) => {
+              results.push(`• ${question}`);
+            });
+          }
         } catch (e) {
           // Skip parsing errors
         }
@@ -164,7 +175,7 @@ async function handleSearchStudentWork(childId: string, query: string = '', filt
       .from('materials')
       .select(`
         id, title, content_type, due_date, completed_at, 
-        grade_value, grade_max_value, grading_notes,
+        grade_value, grade_max_value, grading_notes, lesson_json,
         child_subject:child_subject_id(
           subject:subject_id(name),
           custom_subject_name_override
@@ -249,6 +260,22 @@ async function handleSearchStudentWork(childId: string, query: string = '', filt
         const dueInfo = formatDueDate(item.due_date);
         
         results.push(`• **${item.title}** [${item.content_type}] (${subjectName})${dueInfo}`);
+        
+        // Add sample questions if available
+        if (item.lesson_json) {
+          try {
+            const lessonData = typeof item.lesson_json === 'string' ? 
+              JSON.parse(item.lesson_json) : item.lesson_json;
+            
+            if (lessonData.tasks_or_questions && lessonData.tasks_or_questions.length > 0) {
+              results.push(`  Preview: ${lessonData.tasks_or_questions[0]}`);
+            } else if (lessonData.worksheet_questions && lessonData.worksheet_questions.length > 0) {
+              results.push(`  Preview: ${lessonData.worksheet_questions[0].question_text}`);
+            }
+          } catch (e) {
+            // Skip parsing errors
+          }
+        }
       });
       results.push('');
     }
@@ -269,6 +296,141 @@ async function handleSearchStudentWork(childId: string, query: string = '', filt
   } catch (error: any) {
     console.error('❌ Search student work error:', error);
     return `Error searching student work: ${error.message}`;
+  }
+}
+
+async function handleGetMaterialDetails(childId: string, materialIdentifier: string): Promise<string> {
+  try {
+    const childSubjectIds = await getChildSubjects(childId);
+    
+    let dbQuery = supabase
+      .from('materials')
+      .select(`
+        id, title, content_type, due_date, completed_at,
+        grade_value, grade_max_value, grading_notes, lesson_json,
+        parent_material_id, is_primary_lesson,
+        child_subject:child_subject_id(
+          subject:subject_id(name),
+          custom_subject_name_override
+        ),
+        parent_material:parent_material_id(
+          title, content_type, lesson_json
+        )
+      `)
+      .in('child_subject_id', childSubjectIds);
+
+    // Search by ID first, then by title
+    if (materialIdentifier.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      dbQuery = dbQuery.eq('id', materialIdentifier);
+    } else {
+      dbQuery = dbQuery.ilike('title', `%${materialIdentifier}%`);
+    }
+
+    const { data, error } = await dbQuery.limit(1).single();
+    
+    if (error || !data) {
+      return `Material "${materialIdentifier}" not found. Please check the title or ID.`;
+    }
+
+    const subjectName = (data.child_subject as any)?.custom_subject_name_override || 
+                       (data.child_subject as any)?.subject?.name || 'General';
+
+    const results = [];
+    results.push(`📚 **${data.title}**`);
+    results.push(`Subject: ${subjectName} | Type: ${data.content_type}`);
+    
+    if (data.due_date) {
+      const dueInfo = formatDueDate(data.due_date);
+      results.push(`Due Date: ${data.due_date}${dueInfo}`);
+    }
+    
+    if (data.completed_at) {
+      const gradeInfo = formatGrade(data.grade_value, data.grade_max_value);
+      results.push(`✅ Completed: ${new Date(data.completed_at).toLocaleDateString()}${gradeInfo}`);
+    }
+    
+    results.push('');
+
+    // Parse and display lesson content
+    if (data.lesson_json) {
+      const lessonData = typeof data.lesson_json === 'string' ? 
+        JSON.parse(data.lesson_json) : data.lesson_json;
+      
+      if (lessonData.learning_objectives && lessonData.learning_objectives.length > 0) {
+        results.push(`**Learning Objectives:**`);
+        lessonData.learning_objectives.forEach((obj: string) => {
+          results.push(`• ${obj}`);
+        });
+        results.push('');
+      }
+
+      if (lessonData.main_content_summary_or_extract) {
+        results.push(`**Content Summary:**`);
+        results.push(lessonData.main_content_summary_or_extract);
+        results.push('');
+      }
+
+      if (lessonData.subject_keywords_or_subtopics && lessonData.subject_keywords_or_subtopics.length > 0) {
+        results.push(`**Key Concepts:**`);
+        results.push(lessonData.subject_keywords_or_subtopics.join(', '));
+        results.push('');
+      }
+
+      // Show ALL questions for assignments/worksheets
+      if (lessonData.worksheet_questions && lessonData.worksheet_questions.length > 0) {
+        results.push(`**All Questions:**`);
+        lessonData.worksheet_questions.forEach((q: any) => {
+          results.push(`${q.question_number}. ${q.question_text}`);
+        });
+        results.push('');
+      } else if (lessonData.tasks_or_questions && lessonData.tasks_or_questions.length > 0) {
+        results.push(`**All Questions/Tasks:**`);
+        lessonData.tasks_or_questions.forEach((question: string, index: number) => {
+          results.push(`${index + 1}. ${question}`);
+        });
+        results.push('');
+      }
+
+      // Include answer key for completed work or lesson materials
+      if (lessonData.answer_key && (data.completed_at || data.content_type === 'lesson')) {
+        results.push(`**Answer Key:**`);
+        Object.entries(lessonData.answer_key).forEach(([key, value]) => {
+          results.push(`${key}: ${value}`);
+        });
+        results.push('');
+      }
+
+      if (lessonData.teaching_methodology) {
+        results.push(`**Teaching Notes:** ${lessonData.teaching_methodology}`);
+        results.push('');
+      }
+    }
+
+    // Include parent lesson if this is an assignment/worksheet
+    if (data.parent_material && (data.parent_material as any).lesson_json) {
+      results.push(`**Related Lesson:** ${(data.parent_material as any).title}`);
+      
+      try {
+        const parentLessonData = typeof (data.parent_material as any).lesson_json === 'string' ? 
+          JSON.parse((data.parent_material as any).lesson_json) : (data.parent_material as any).lesson_json;
+        
+        if (parentLessonData.main_content_summary_or_extract) {
+          results.push(`**Lesson Context:** ${parentLessonData.main_content_summary_or_extract.slice(0, 300)}...`);
+        }
+      } catch (e) {
+        // Skip parsing errors
+      }
+    }
+
+    if (data.grading_notes) {
+      results.push(`**Teacher Notes:** ${data.grading_notes}`);
+    }
+
+    return results.join('\n');
+
+  } catch (error: any) {
+    console.error('❌ Error getting material details:', error);
+    return `Error retrieving material details: ${error.message}`;
   }
 }
 
@@ -308,6 +470,10 @@ app.post('/tool', async (req: Request, res: Response): Promise<void> => {
           content_type: args.content_type,
           low_scores: args.low_scores
         });
+        break;
+      
+      case 'get_material_details':
+        result = await handleGetMaterialDetails(childId, args.material_identifier);
         break;
       
       default:
