@@ -1,195 +1,158 @@
 # AI Tutor MCP Server - Claude Reference Guide
 
-This MCP server provides Claude with intelligent access to student educational data, enabling personalized tutoring experiences through natural language queries.
+This MCP server provides Claude with intelligent access to student educational data, enabling personalized tutoring experiences. The server separates **teaching content** (lessons) from **student work** (assignments/quizzes) for optimal AI tutoring support.
 
 ## Overview
 
-The server translates natural student requests into smart database queries, returning contextual educational information that helps Claude provide targeted tutoring support.
+The server offers two focused tools that distinguish between what students are learning (lessons) and what they need help with (their assignments, worksheets, quizzes, and tests).
 
 ## Available Tools
 
-### 1. `search_database`
-**Purpose**: Search student educational data with natural language types
-**Best for**: General searches and specific educational content types
+### 1. `search_lessons`
+**Purpose**: Find teaching materials and lesson content for AI to understand what the student is learning
+**Best for**: Getting context about topics, understanding learning objectives, finding relevant teaching materials
 
 **Parameters**:
 - `child_id` (required): Student UUID
-- `query` (optional): Search query text
-- `search_type`: Type of search to perform
+- `query` (optional): Search query for lesson topics (e.g., "Other New England Colonies Are Founded", "History Section 3.2")
 
-**Natural Search Types**:
-- `homework` - "What's my homework?" → Next assignment with full context
-- `help_with_subject` - "I need help with math" → Subject materials and progress
-- `review` - "Let's review something" → Materials needing review (< 80% grades)
-- `upcoming_tests` - "What tests do I have?" → Upcoming assessments
-- `current_lesson` - "What am I learning now?" → Current lessons and objectives
-- `all` - Complete overview of student's academic status
+**Content Types Searched**: `lesson`, `reading`, `chapter`, or materials marked as `is_primary_lesson = true`
+
+**Returns**: 
+- Lesson titles and subjects
+- Learning objectives
+- Key topics and concepts
+- Teaching materials for AI tutoring context
 
 **Example Usage**:
 ```json
 {
   "child_id": "abc123...",
-  "search_type": "homework"
+  "query": "New England Colonies"
 }
 ```
 
-### 2. `get_next_homework`
-**Purpose**: Get the most urgent incomplete assignment with full learning context
-**Best for**: "What should I work on next?" queries
+### 2. `search_student_work`
+**Purpose**: Find student assignments, worksheets, quizzes, and tests for AI to help with actual student work
+**Best for**: Identifying what students need to work on, review completed work, find assignments needing help
 
 **Parameters**:
 - `child_id` (required): Student UUID
-- `subject` (optional): Filter by specific subject
+- `query` (optional): Search query for specific assignments
+- `status` (optional): Filter by status
+  - `incomplete` - Unfinished work
+  - `completed` - Finished work
+  - `overdue` - Past due assignments
+  - `due_soon` - Due within 3 days
+- `subject` (optional): Filter by subject name
+- `content_type` (optional): Filter by type (`assignment`, `worksheet`, `quiz`, `test`)
+- `low_scores` (optional): boolean - Show only work with grades < 75%
 
-**Returns**: Assignment details, due date urgency, related lesson content, practice problems
+**Content Types Searched**: `assignment`, `worksheet`, `quiz`, `test`
 
-### 3. `get_subject_context`
-**Purpose**: Comprehensive subject overview with current work, grades, and lessons
-**Best for**: Subject-specific help requests like "I need help with history"
+**Returns**: 
+- Assignment details with due dates and urgency indicators
+- Completion status and grades
+- Organized by incomplete vs. completed work
+- Visual indicators for overdue/due soon items
 
-**Parameters**:
-- `child_id` (required): Student UUID
-- `subject_name` (required): Subject name (e.g., "Math", "History", "English")
-
-**Returns**: Current work, recent performance, current lessons, upcoming assessments
-
-### 4. `get_material_content`
-**Purpose**: Get detailed content for specific educational materials
-**Best for**: Deep dives into specific lessons or assignments
-
-**Parameters**:
-- `child_id` (required): Student UUID
-- `material_identifier` (required): Material title or UUID
-
-**Returns**: Full material content, learning objectives, practice questions, related materials
-
-### 5. `get_student_profile`
-**Purpose**: Get learning preferences, performance metrics, and study habits
-**Best for**: Understanding how to best teach this student
-
-**Parameters**:
-- `child_id` (required): Student UUID
-
-**Returns**: Learning style, performance stats, study preferences, difficulty areas
+**Example Usage**:
+```json
+{
+  "child_id": "abc123...",
+  "query": "colonies worksheet",
+  "status": "incomplete",
+  "subject": "history"
+}
+```
 
 ## Student Query Translation Guide
 
-| Student Says | Recommended Tool | Search Type |
+| Student Says | Recommended Tool | Parameters |
 |-------------|------------------|-------------|
-| "What's my homework?" | `get_next_homework` | - |
-| "I need help with math" | `get_subject_context` | subject_name: "math" |
-| "Let's review something" | `search_database` | search_type: "review" |
-| "What tests do I have?" | `search_database` | search_type: "upcoming_tests" |
-| "I don't understand fractions" | `get_material_content` | material_identifier: "fractions" |
-| "What am I learning now?" | `search_database` | search_type: "current_lesson" |
-| "How am I doing overall?" | `get_student_profile` | - |
+| "What's my homework?" | `search_student_work` | `status: "incomplete"` |
+| "I need help with math" | `search_student_work` then `search_lessons` | First: `subject: "math", status: "incomplete"`<br/>Then: `query: [topic from assignment]` |
+| "Let's review something" | `search_student_work` | `low_scores: true` or `status: "completed"` |
+| "What tests do I have?" | `search_student_work` | `content_type: "quiz"` or `content_type: "test"` |
+| "I don't understand fractions" | `search_lessons` | `query: "fractions"` |
+| "Help with my colonies worksheet" | `search_lessons` then `search_student_work` | First: `query: "colonies"`<br/>Then: `query: "colonies", content_type: "worksheet"` |
+| "What's due soon?" | `search_student_work` | `status: "due_soon"` |
+| "Show me my low grades" | `search_student_work` | `low_scores: true, status: "completed"` |
 
 ## Response Format Examples
 
-### Homework Response
+### Student Work Search Response
 ```
-📚 **Next Assignment: Algebra Practice Problems**
-Subject: Math
-Type: assignment
-⏰ **DUE TOMORROW** - 2024-08-15
+📝 **Student Work Found:**
 
-**What you'll practice:**
-- Solving linear equations
-- Working with variables
+**📋 Incomplete Work (2):**
+• **Algebra Practice Problems** [assignment] (Math) ⏰ **DUE TOMORROW**
+• **Colonial America Essay** [assignment] (History) 📅 Due 2024-08-20
 
-**Sample problems:**
-- Question 1: 2x + 5 = 13, solve for x
-- Question 2: 3(x - 4) = 15
+**✅ Completed Work (3):**
+• **Linear Equations Worksheet** [worksheet] (Math) 🅰️ 95%
+• **Multiplication Quiz** [quiz] (Math) 🅱️ 85%
+• **Geography Test** [test] (Social Studies) 🆔 72%
 ```
 
-### Subject Context Response
+### Lesson Search Response  
 ```
-📚 **Math - Subject Overview**
+📚 **Teaching Materials Found:**
 
-**📝 Current Work (3 items):**
-- Algebra Practice Problems [assignment] - Due: 2024-08-15
-- Geometry Quiz [quiz] - Due: 2024-08-18
+**Other New England Colonies Are Founded** (History)
+**Learning Objectives:**
+• Explain the founding of Connecticut and Rhode Island
+• Describe the role of religious freedom in colonial expansion
+• Compare different colonial governments
+**Key Topics:** Roger Williams, Thomas Hooker, religious tolerance, colonial charters, Fundamental Orders
+---
 
-**📊 Recent Performance:**
-- 🅰️ Linear Equations Worksheet: 95%
-- 🅱️ Word Problems Assignment: 85%
-**Average:** 🅰️ 90%
-
-**📖 Current Lessons:**
-- **Introduction to Algebra**
-  Focus: Solving equations, Understanding variables
-```
-
-### Student Profile Response
-```
-👤 **Sarah's Learning Profile**
-Grade: 8
-
-**🎯 Learning Stats:**
-- Days learning together: 45
-- Current streak: 12 correct
-- Best streak: 18 correct
-
-**📚 Learning Preferences:**
-- Explanation style: step_by_step
-- Learning pace: moderate
-- Confidence level: building
-
-**⏰ Study Preferences:**
-- Preferred study time: 09:00:00 - 15:00:00
-- Max daily study: 240 minutes
-- Difficult subjects in morning: Yes
+**The Connecticut River Valley** (History)
+**Learning Objectives:**
+• Identify geographic factors in settlement patterns
+• Understand economic opportunities in the Connecticut valley
+**Key Topics:** fertile soil, river transportation, fur trade, Hartford settlement
+---
 ```
 
 ## Tutoring Flow Recommendations
 
-### 1. Session Start
-Use `get_student_profile` to understand:
-- Learning preferences (step-by-step vs. conceptual)
-- Current confidence level
-- Recent performance patterns
+### 1. Identify Student Need
+When a student asks for help:
+- Use `search_student_work` to find what they need to work on
+- Look for overdue items, upcoming due dates, or specific assignments they mention
 
-### 2. Determine Focus
-Use `get_next_homework` or subject-specific `get_subject_context` to:
-- Identify urgent work
-- Understand current learning objectives
-- Get relevant practice problems
+### 2. Get Teaching Context
+Once you know what assignment they need help with:
+- Use `search_lessons` with relevant topic keywords from the assignment
+- This gives you the teaching materials and learning objectives to help explain concepts
 
-### 3. Provide Context
-Use `get_material_content` for detailed explanations:
-- Full lesson content
-- Learning objectives
-- Practice questions
-- Related materials
+### 3. Provide Targeted Help
+With both student work and lesson context:
+- Reference the learning objectives when explaining concepts
+- Use the key topics from lessons to provide comprehensive explanations
+- Connect the lesson content to the specific assignment questions
 
-### 4. Adaptive Teaching
-Based on profile data:
-- **step_by_step**: Break down problems into clear steps
-- **conceptual**: Focus on understanding principles
-- **building confidence**: Provide encouragement and start with easier concepts
+### 4. Track Progress
+Use filters in `search_student_work`:
+- `low_scores: true` to identify areas needing more practice
+- `status: "completed"` to review what they've mastered
+- `status: "due_soon"` to prioritize urgent work
 
-## Error Handling
+## Visual Indicators
 
-The server provides helpful error messages:
-- Invalid student ID → "Unable to access student subjects"
-- Subject not found → Lists available subjects
-- No homework → "Great job staying on top of your work!"
-- Material not found → "Material not found. Please check the title or ID"
+The server provides helpful visual cues:
+- **Urgency Indicators**: 🚨 OVERDUE, ⚠️ DUE TODAY, ⏰ DUE TOMORROW
+- **Grade Indicators**: 🅰️ 90%+, 🅱️ 80-89%, 🆔 70-79%, 🆘 60-69%, ❌ <60%
+- **Status Icons**: 📋 Incomplete Work, ✅ Completed Work, 📚 Teaching Materials
 
-## Performance Features
+## Best Practices for AI Tutoring
 
-- **Smart Urgency**: Overdue (🚨), Due Today (⚠️), Due Tomorrow (⏰)
-- **Grade Analysis**: Color-coded performance indicators (🅰️🅱️🆔🆘❌)
-- **Contextual Bundling**: Assignments include related lessons and practice problems
-- **Learning Memory**: Tracks topics covered and confidence levels
-
-## Best Practices
-
-1. **Start with Profile**: Always check `get_student_profile` to understand learning style
-2. **Use Natural Types**: Leverage `homework`, `review`, `help_with_subject` for intuitive searches
-3. **Provide Context**: Include related lessons and practice problems in explanations
-4. **Monitor Progress**: Use grade data to identify areas needing extra attention
-5. **Adapt Teaching**: Match explanation style to student preferences
+1. **Two-Step Approach**: When helping with assignments, first search lessons for teaching context, then search student work for the specific assignment
+2. **Use Lesson Context**: Always reference learning objectives and key topics from lessons when explaining concepts
+3. **Prioritize by Urgency**: Use status filters to identify overdue or due-soon items first
+4. **Track Performance**: Use `low_scores: true` to identify concepts that need reinforcement
+5. **Subject-Specific Help**: Filter by subject to focus on specific academic areas
 
 ## Environment Setup
 
@@ -207,4 +170,4 @@ npm run dev      # Development mode with auto-reload
 npm test         # Run connection tests
 ```
 
-This MCP server transforms Claude into an intelligent tutoring assistant that understands student context and provides personalized educational support.
+This simplified MCP server transforms Claude into an intelligent tutoring assistant by clearly separating lesson content (what to teach) from student work (what to help with), enabling more effective and contextual tutoring support.
