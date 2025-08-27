@@ -9,7 +9,7 @@ dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error('❌ Missing environment variables');
@@ -460,6 +460,6 @@ app.post('/tool', async (req: Request, res: Response): Promise<void> => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AI Tutor MCP server running on port ${PORT}`);
 });
