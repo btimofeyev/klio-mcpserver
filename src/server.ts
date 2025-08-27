@@ -606,6 +606,8 @@ function createMcpServer(): McpServer {
     },
     async ({ query }) => {
       try {
+        console.log('🔍 MCP Search Tool Called with query:', JSON.stringify(query));
+        
         // Extract child_id from the query if it starts with it
         // Format: "child_id:UUID query text" or fallback to default
         let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
@@ -615,6 +617,9 @@ function createMcpServer(): McpServer {
           const parts = query.split(' ');
           childId = parts[0].replace('child_id:', '');
           searchQuery = parts.slice(1).join(' ');
+          console.log('🆔 Extracted child_id:', childId, 'search_query:', searchQuery);
+        } else {
+          console.log('⚠️ No child_id prefix found, using default:', childId, 'full query:', query);
         }
         
         const childSubjectIds = await getChildSubjects(childId);
@@ -632,13 +637,15 @@ function createMcpServer(): McpServer {
             )
           `)
           .in('child_subject_id', childSubjectIds)
-          .in('content_type', ['assignment', 'worksheet', 'quiz', 'test']);
+          .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
 
         if (searchQuery.trim()) {
           workQuery = workQuery.ilike('title', `%${searchQuery}%`);
         }
 
         const { data: workData } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
+        
+        console.log('📊 Search found', workData?.length || 0, 'student work items');
         
         if (workData) {
           workData.forEach(item => {
@@ -716,6 +723,8 @@ function createMcpServer(): McpServer {
         
         // Return structured OpenAI-compatible response
         const searchResults = { results };
+        
+        console.log('🎯 Returning search results:', results.length, 'total items');
         
         return {
           content: [{
