@@ -290,10 +290,11 @@ async function handleGetMaterialDetails(childId: string, materialIdentifier: str
       `)
       .in('child_subject_id', childSubjectIds);
 
-    // Search by ID first, then by title
+    // Search by ID first, then by title with fuzzy matching
     if (materialIdentifier.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
       dbQuery = dbQuery.eq('id', materialIdentifier);
     } else {
+      // More flexible title matching
       dbQuery = dbQuery.ilike('title', `%${materialIdentifier}%`);
     }
 
@@ -392,6 +393,31 @@ async function handleGetMaterialDetails(childId: string, materialIdentifier: str
 
     if (data.grading_notes) {
       results.push(`**Teacher Notes:** ${data.grading_notes}`);
+    }
+
+    // Return structured JSON if this has worksheet questions for better AI parsing
+    if (data.lesson_json) {
+      try {
+        const lessonData = typeof data.lesson_json === 'string' ? 
+          JSON.parse(data.lesson_json) : data.lesson_json;
+        
+        if (lessonData.worksheet_questions && lessonData.worksheet_questions.length > 0) {
+          // Return structured data for worksheets/tests
+          return JSON.stringify({
+            title: data.title,
+            content_type: data.content_type,
+            subject: subjectName,
+            completed_at: data.completed_at,
+            grade_value: data.grade_value,
+            grade_max_value: data.grade_max_value,
+            worksheet_questions: lessonData.worksheet_questions,
+            learning_objectives: lessonData.learning_objectives || [],
+            assignment_metadata: lessonData.assignment_metadata || {}
+          });
+        }
+      } catch (e) {
+        // Fall back to text format if JSON parsing fails
+      }
     }
 
     return results.join('\n');
