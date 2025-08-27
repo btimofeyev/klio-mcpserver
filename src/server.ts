@@ -485,7 +485,132 @@ app.post('/tool', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// SSE endpoint for GPT-5 MCP integration
+app.get('/sse', async (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Send initial connection event
+  res.write('event: connected\n');
+  res.write('data: {"type": "connected"}\n\n');
+
+  // Handle tool list request
+  const toolsList = {
+    tools: [
+      {
+        name: 'search_lessons',
+        description: 'Search for educational lessons and teaching materials',
+        input_schema: {
+          type: 'object',
+          properties: {
+            child_id: { type: 'string', description: 'Child ID for context' },
+            query: { type: 'string', description: 'Search query for lessons' }
+          },
+          required: ['child_id']
+        }
+      },
+      {
+        name: 'search_student_work',
+        description: 'Search student assignments, homework, and completed work',
+        input_schema: {
+          type: 'object',
+          properties: {
+            child_id: { type: 'string', description: 'Child ID for context' },
+            query: { type: 'string', description: 'Search query for work' },
+            status: { type: 'string', enum: ['incomplete', 'completed', 'all'], description: 'Filter by completion status' },
+            subject: { type: 'string', description: 'Filter by subject' },
+            low_scores: { type: 'boolean', description: 'Include work with low scores for review' }
+          },
+          required: ['child_id']
+        }
+      },
+      {
+        name: 'get_material_details',
+        description: 'Get detailed content for a specific educational material including worksheets, tests, and assignments with all questions',
+        input_schema: {
+          type: 'object',
+          properties: {
+            child_id: { type: 'string', description: 'Child ID for context' },
+            material_identifier: { type: 'string', description: 'Name or ID of the material to retrieve (e.g., "America: Land I Love - Test 1")' }
+          },
+          required: ['child_id', 'material_identifier']
+        }
+      }
+    ]
+  };
+
+  // Send tools list
+  res.write('event: tools\n');
+  res.write(`data: ${JSON.stringify(toolsList)}\n\n`);
+
+  // Keep connection alive and handle requests
+  const keepAlive = setInterval(() => {
+    res.write('event: ping\n');
+    res.write('data: {"type": "ping"}\n\n');
+  }, 30000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    res.end();
+  });
+
+  req.on('error', () => {
+    clearInterval(keepAlive);
+    res.end();
+  });
+});
+
+// Handle tool execution via POST for SSE
+app.post('/sse/tool', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, arguments: args } = req.body;
+
+    if (!name || !args || !args.child_id) {
+      res.status(400).json({ error: 'Missing required parameters' });
+      return;
+    }
+
+    let result: string;
+    const childId = args.child_id;
+
+    switch (name) {
+      case 'search_lessons':
+        result = await handleSearchLessons(childId, args.query);
+        break;
+      
+      case 'search_student_work':
+        result = await handleSearchStudentWork(childId, args.query, {
+          status: args.status,
+          subject: args.subject,
+          content_type: args.content_type,
+          low_scores: args.low_scores
+        });
+        break;
+      
+      case 'get_material_details':
+        result = await handleGetMaterialDetails(childId, args.material_identifier);
+        break;
+      
+      default:
+        res.status(400).json({ error: `Unknown tool: ${name}` });
+        return;
+    }
+
+    res.json({ content: [{ type: 'text', text: result }] });
+    return;
+  } catch (error: any) {
+    console.error(`❌ SSE tool execution error:`, error);
+    res.status(500).json({ error: `Tool execution failed: ${error.message}` });
+  }
+});
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AI Tutor MCP server running on port ${PORT}`);
+  console.log(`📡 SSE endpoint available at: http://localhost:${PORT}/sse`);
 });
