@@ -46,19 +46,7 @@ async function getChildSubjects(childId: string) {
   return (data || []).map(cs => cs.id);
 }
 
-function formatDueDate(dueDate: string | null): string {
-  if (!dueDate) return '';
-  
-  const due = new Date(dueDate);
-  const today = new Date();
-  const daysDiff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 3600 * 24));
-  
-  if (daysDiff < 0) return ' 🚨 **OVERDUE**';
-  if (daysDiff === 0) return ' ⚠️ **DUE TODAY**';
-  if (daysDiff === 1) return ' ⏰ **DUE TOMORROW**';
-  if (daysDiff <= 7) return ` ⏰ Due in ${daysDiff} days`;
-  return ` 📅 Due ${dueDate}`;
-}
+// formatDueDate function removed - dates are teacher planning, not student deadlines
 
 function formatGrade(gradeValue: number | null, gradeMaxValue: number | null): string {
   if (!gradeValue || !gradeMaxValue) return '';
@@ -257,25 +245,8 @@ async function handleSearchStudentWork(childId: string, query: string = '', filt
       incomplete.forEach(item => {
         const subjectName = (item.child_subject as any)?.custom_subject_name_override || 
                            (item.child_subject as any)?.subject?.name || 'General';
-        const dueInfo = formatDueDate(item.due_date);
         
-        results.push(`• **${item.title}** [${item.content_type}] (${subjectName})${dueInfo}`);
-        
-        // Add sample questions if available
-        if (item.lesson_json) {
-          try {
-            const lessonData = typeof item.lesson_json === 'string' ? 
-              JSON.parse(item.lesson_json) : item.lesson_json;
-            
-            if (lessonData.tasks_or_questions && lessonData.tasks_or_questions.length > 0) {
-              results.push(`  Preview: ${lessonData.tasks_or_questions[0]}`);
-            } else if (lessonData.worksheet_questions && lessonData.worksheet_questions.length > 0) {
-              results.push(`  Preview: ${lessonData.worksheet_questions[0].question_text}`);
-            }
-          } catch (e) {
-            // Skip parsing errors
-          }
-        }
+        results.push(`• **${item.title}** [${item.content_type}] (${subjectName})`);
       });
       results.push('');
     }
@@ -339,10 +310,7 @@ async function handleGetMaterialDetails(childId: string, materialIdentifier: str
     results.push(`📚 **${data.title}**`);
     results.push(`Subject: ${subjectName} | Type: ${data.content_type}`);
     
-    if (data.due_date) {
-      const dueInfo = formatDueDate(data.due_date);
-      results.push(`Due Date: ${data.due_date}${dueInfo}`);
-    }
+    // Due dates removed - not relevant for student tutoring
     
     if (data.completed_at) {
       const gradeInfo = formatGrade(data.grade_value, data.grade_max_value);
