@@ -423,6 +423,164 @@ async function handleGetMaterialDetails(childId: string, materialIdentifier: str
 }
 
 // ===============================
+// OPENAI FORMAT HELPER FUNCTIONS
+// ===============================
+
+function formatCompleteEducationalContent(material: any): string {
+  const sections = [];
+  
+  // Header information
+  sections.push(`📚 ${material.title}`);
+  sections.push(`Grade: ${material.grade_level_suggestion || 'N/A'} | Type: ${material.content_type_suggestion || material.content_type}`);
+  
+  // Add completion status if it's student work
+  if (material.content_type && ['assignment', 'worksheet', 'quiz', 'test'].includes(material.content_type)) {
+    if (material.completed_at) {
+      const gradeInfo = formatGrade(material.grade_value, material.grade_max_value);
+      sections.push(`✅ Completed: ${new Date(material.completed_at).toLocaleDateString()}${gradeInfo}`);
+    } else {
+      sections.push(`📋 Status: Incomplete`);
+    }
+  }
+  
+  sections.push('');
+
+  // Learning Objectives
+  if (material.learning_objectives && material.learning_objectives.length > 0) {
+    sections.push('🎯 LEARNING OBJECTIVES:');
+    material.learning_objectives.forEach((obj: string) => sections.push(`• ${obj}`));
+    sections.push('');
+  }
+
+  // Main Content Summary
+  if (material.main_content_summary_or_extract) {
+    sections.push('📖 LESSON CONTENT:');
+    sections.push(material.main_content_summary_or_extract);
+    sections.push('');
+  }
+
+  // Key Topics/Keywords
+  if (material.subject_keywords_or_subtopics && material.subject_keywords_or_subtopics.length > 0) {
+    sections.push('🔑 KEY TOPICS:');
+    sections.push(material.subject_keywords_or_subtopics.join(', '));
+    sections.push('');
+  }
+
+  // All Questions with Answers (for worksheets/assignments)
+  if (material.worksheet_questions && material.worksheet_questions.length > 0) {
+    sections.push('📝 QUESTIONS AND ANSWERS:');
+    material.worksheet_questions.forEach((q: any) => {
+      sections.push(`\nQuestion ${q.question_number}: ${q.question_text}`);
+      if (material.answer_key && material.answer_key[q.question_number]) {
+        sections.push(`✓ Answer: ${material.answer_key[q.question_number]}`);
+      }
+      // Add any problem context from problems_with_context
+      const problemContext = (material as any).problems_with_context?.find((p: any) => p.problem_number === q.question_number);
+      if (problemContext) {
+        if (problemContext.solution_hint) {
+          sections.push(`💡 Hint: ${problemContext.solution_hint}`);
+        }
+        if (problemContext.concepts && problemContext.concepts.length > 0) {
+          sections.push(`🧠 Concepts: ${problemContext.concepts.join(', ')}`);
+        }
+      }
+    });
+    sections.push('');
+  } else if (material.tasks_or_questions && material.tasks_or_questions.length > 0) {
+    // Handle lesson tasks/questions format
+    sections.push('📝 PRACTICE PROBLEMS:');
+    material.tasks_or_questions.forEach((question: string, index: number) => {
+      const questionNum = (index + 1).toString();
+      sections.push(`\n${questionNum}. ${question}`);
+      if (material.answer_key && material.answer_key[questionNum]) {
+        sections.push(`✓ Answer: ${material.answer_key[questionNum]}`);
+      }
+    });
+    sections.push('');
+  }
+
+  // Include answer key for completed work or lesson materials
+  if (material.answer_key && (material.completed_at || material.content_type === 'lesson')) {
+    sections.push('🔢 COMPLETE ANSWER KEY:');
+    Object.entries(material.answer_key).forEach(([key, value]) => {
+      sections.push(`${key}: ${value}`);
+    });
+    sections.push('');
+  }
+
+  // Teaching Methodology
+  if (material.teaching_methodology) {
+    sections.push('👩‍🏫 TEACHING APPROACH:');
+    sections.push(material.teaching_methodology);
+    sections.push('');
+  }
+
+  // Common Mistakes
+  if (material.common_mistakes && material.common_mistakes.length > 0) {
+    sections.push('⚠️ COMMON STUDENT MISTAKES:');
+    material.common_mistakes.forEach((mistake: string) => sections.push(`• ${mistake}`));
+    sections.push('');
+  }
+
+  // Prerequisites
+  if (material.prerequisites && material.prerequisites.length > 0) {
+    sections.push('📚 PREREQUISITES:');
+    material.prerequisites.forEach((req: string) => sections.push(`• ${req}`));
+    sections.push('');
+  }
+
+  // Visual content descriptions
+  if (material.visual_content_descriptions && material.visual_content_descriptions.length > 0) {
+    sections.push('🖼️ VISUAL ELEMENTS:');
+    material.visual_content_descriptions.forEach((desc: string) => sections.push(`• ${desc}`));
+    sections.push('');
+  }
+
+  // Assignment metadata for worksheets/tests
+  if (material.assignment_metadata) {
+    const metadata = material.assignment_metadata;
+    if (metadata.total_points) {
+      sections.push(`📊 Total Points: ${metadata.total_points}`);
+    }
+    if (metadata.estimated_time_minutes) {
+      sections.push(`⏱️ Estimated Time: ${metadata.estimated_time_minutes} minutes`);
+    }
+    if (metadata.difficulty_level) {
+      sections.push(`📈 Difficulty: ${metadata.difficulty_level}`);
+    }
+    if (metadata.key_terms && metadata.key_terms.length > 0) {
+      sections.push(`📖 Key Terms: ${metadata.key_terms.join(', ')}`);
+    }
+  } else if (material.estimated_completion_time_minutes) {
+    sections.push(`⏱️ Estimated Time: ${material.estimated_completion_time_minutes} minutes`);
+  }
+
+  // Include parent lesson context if this is an assignment/worksheet
+  if (material.parent_material && (material.parent_material as any).lesson_json) {
+    sections.push(`🔗 RELATED LESSON: ${(material.parent_material as any).title}`);
+    
+    try {
+      const parentLessonData = typeof (material.parent_material as any).lesson_json === 'string' ? 
+        JSON.parse((material.parent_material as any).lesson_json) : (material.parent_material as any).lesson_json;
+      
+      if (parentLessonData.main_content_summary_or_extract) {
+        sections.push(`📖 Lesson Context: ${parentLessonData.main_content_summary_or_extract.slice(0, 300)}...`);
+      }
+    } catch (e) {
+      // Skip parsing errors
+    }
+    sections.push('');
+  }
+
+  // Teacher grading notes
+  if (material.grading_notes) {
+    sections.push(`📝 TEACHER NOTES: ${material.grading_notes}`);
+  }
+
+  return sections.join('\n');
+}
+
+// ===============================
 // MCP SERVER INITIALIZATION
 // ===============================
 
@@ -447,30 +605,137 @@ function createMcpServer(): McpServer {
       query: z.string().describe('Search query for educational content')
     },
     async ({ query }) => {
-      // Extract child_id from the query if it starts with it
-      // Format: "child_id:UUID query text" or fallback to default
-      let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
-      let searchQuery = query;
-      
-      if (query.startsWith('child_id:')) {
-        const parts = query.split(' ');
-        childId = parts[0].replace('child_id:', '');
-        searchQuery = parts.slice(1).join(' ');
+      try {
+        // Extract child_id from the query if it starts with it
+        // Format: "child_id:UUID query text" or fallback to default
+        let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
+        let searchQuery = query;
+        
+        if (query.startsWith('child_id:')) {
+          const parts = query.split(' ');
+          childId = parts[0].replace('child_id:', '');
+          searchQuery = parts.slice(1).join(' ');
+        }
+        
+        const childSubjectIds = await getChildSubjects(childId);
+        const results: any[] = [];
+        
+        // Search student work (assignments, worksheets, quizzes, tests)
+        let workQuery = supabase
+          .from('materials')
+          .select(`
+            id, title, content_type, due_date, completed_at, 
+            grade_value, grade_max_value, lesson_json, main_content_summary_or_extract,
+            child_subject:child_subject_id(
+              subject:subject_id(name),
+              custom_subject_name_override
+            )
+          `)
+          .in('child_subject_id', childSubjectIds)
+          .in('content_type', ['assignment', 'worksheet', 'quiz', 'test']);
+
+        if (searchQuery.trim()) {
+          workQuery = workQuery.ilike('title', `%${searchQuery}%`);
+        }
+
+        const { data: workData } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
+        
+        if (workData) {
+          workData.forEach(item => {
+            const subjectName = (item.child_subject as any)?.custom_subject_name_override || 
+                               (item.child_subject as any)?.subject?.name || 'General';
+            
+            // Create preview text with rich information
+            const statusInfo = item.completed_at ? 
+              `✅ Completed${formatGrade(item.grade_value, item.grade_max_value)}` : 
+              '📋 Incomplete';
+            
+            const previewText = item.main_content_summary_or_extract || 
+              (item.lesson_json ? JSON.parse(item.lesson_json).main_content_summary_or_extract : '') || 
+              'Educational material';
+            
+            const snippet = `${item.content_type.toUpperCase()} | ${subjectName} | ${statusInfo} | ${previewText.substring(0, 150)}...`;
+            
+            results.push({
+              id: item.id,
+              title: item.title,
+              text: snippet,
+              url: `internal://materials/${item.id}`
+            });
+          });
+        }
+        
+        // Search lessons and teaching materials
+        let lessonQuery = supabase
+          .from('materials')
+          .select(`
+            id, title, content_type, lesson_json, main_content_summary_or_extract,
+            child_subject:child_subject_id(
+              subject:subject_id(name),
+              custom_subject_name_override
+            )
+          `)
+          .in('child_subject_id', childSubjectIds)
+          .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
+
+        if (searchQuery.trim()) {
+          lessonQuery = lessonQuery.ilike('title', `%${searchQuery}%`);
+        }
+
+        const { data: lessonData } = await lessonQuery.order('title', { ascending: true }).limit(15);
+        
+        if (lessonData) {
+          lessonData.forEach(item => {
+            const subjectName = (item.child_subject as any)?.custom_subject_name_override || 
+                               (item.child_subject as any)?.subject?.name || 'General';
+            
+            let lessonInfo = '';
+            if (item.lesson_json) {
+              try {
+                const lessonData = typeof item.lesson_json === 'string' ? 
+                  JSON.parse(item.lesson_json) : item.lesson_json;
+                
+                const objectives = lessonData.learning_objectives?.slice(0, 2).join(', ') || 'N/A';
+                const topics = lessonData.subject_keywords_or_subtopics?.slice(0, 3).join(', ') || 'N/A';
+                lessonInfo = `Objectives: ${objectives} | Topics: ${topics}`;
+              } catch (e) {
+                lessonInfo = 'Teaching material';
+              }
+            }
+            
+            const snippet = `LESSON | ${subjectName} | ${lessonInfo} | ${(item.main_content_summary_or_extract || '').substring(0, 100)}...`;
+            
+            results.push({
+              id: item.id,
+              title: item.title,
+              text: snippet,
+              url: `internal://materials/${item.id}`
+            });
+          });
+        }
+        
+        // Return structured OpenAI-compatible response
+        const searchResults = { results };
+        
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(searchResults)
+          }]
+        };
+        
+      } catch (error: any) {
+        console.error('❌ Search tool error:', error);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ 
+              results: [],
+              error: `Search failed: ${error.message}`
+            })
+          }]
+        };
       }
-      
-      // Search both assignments and lessons
-      const workResult = await handleSearchStudentWork(childId, searchQuery);
-      const lessonResult = await handleSearchLessons(childId, searchQuery);
-      
-      // Combine results
-      const combinedResults = `**Student Assignments & Work:**\n${workResult}\n\n**Lessons & Teaching Materials:**\n${lessonResult}`;
-      
-      return {
-        content: [{
-          type: 'text',
-          text: combinedResults
-        }]
-      };
     }
   );
 
@@ -482,24 +747,166 @@ function createMcpServer(): McpServer {
       id: z.string().describe('Material ID or title to fetch complete content for')
     },
     async ({ id }) => {
-      // Extract child_id from the id if it starts with it
-      let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
-      let materialId = id;
-      
-      if (id.startsWith('child_id:')) {
-        const parts = id.split('|');
-        childId = parts[0].replace('child_id:', '');
-        materialId = parts[1] || id;
+      try {
+        // Extract child_id from the id if it starts with it
+        let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
+        let materialId = id;
+        
+        if (id.startsWith('child_id:')) {
+          const parts = id.split('|');
+          childId = parts[0].replace('child_id:', '');
+          materialId = parts[1] || id;
+        }
+        
+        const childSubjectIds = await getChildSubjects(childId);
+        
+        let dbQuery = supabase
+          .from('materials')
+          .select(`
+            id, title, content_type, due_date, completed_at,
+            grade_value, grade_max_value, grading_notes, lesson_json,
+            parent_material_id, is_primary_lesson, main_content_summary_or_extract,
+            learning_objectives, subject_keywords_or_subtopics, tasks_or_questions,
+            worksheet_questions, assignment_metadata, teaching_methodology,
+            prerequisites, common_mistakes, answer_key, visual_content_descriptions,
+            estimated_completion_time_minutes, grade_level_suggestion, content_type_suggestion,
+            child_subject:child_subject_id(
+              subject:subject_id(name),
+              custom_subject_name_override
+            ),
+            parent_material:parent_material_id(
+              title, content_type, lesson_json
+            )
+          `)
+          .in('child_subject_id', childSubjectIds);
+
+        // Search by ID first, then by title with fuzzy matching
+        if (materialId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+          dbQuery = dbQuery.eq('id', materialId);
+        } else {
+          dbQuery = dbQuery.ilike('title', `%${materialId}%`);
+        }
+
+        const { data, error } = await dbQuery.limit(1).single();
+        
+        if (error || !data) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                id: materialId,
+                title: 'Not Found',
+                text: `Material "${materialId}" not found. Please check the title or ID.`,
+                url: `internal://materials/${materialId}`,
+                metadata: { error: 'Material not found' }
+              })
+            }]
+          };
+        }
+
+        const subjectName = (data.child_subject as any)?.custom_subject_name_override || 
+                           (data.child_subject as any)?.subject?.name || 'General';
+
+        // Parse lesson_json if it exists
+        let parsedLessonData = null;
+        if (data.lesson_json) {
+          try {
+            parsedLessonData = typeof data.lesson_json === 'string' ? 
+              JSON.parse(data.lesson_json) : data.lesson_json;
+            
+            // Merge parsed data with main data
+            if (parsedLessonData) {
+              data.learning_objectives = data.learning_objectives || parsedLessonData.learning_objectives;
+              data.subject_keywords_or_subtopics = data.subject_keywords_or_subtopics || parsedLessonData.subject_keywords_or_subtopics;
+              data.tasks_or_questions = data.tasks_or_questions || parsedLessonData.tasks_or_questions;
+              data.worksheet_questions = data.worksheet_questions || parsedLessonData.worksheet_questions;
+              data.assignment_metadata = data.assignment_metadata || parsedLessonData.assignment_metadata;
+              data.teaching_methodology = data.teaching_methodology || parsedLessonData.teaching_methodology;
+              data.prerequisites = data.prerequisites || parsedLessonData.prerequisites;
+              data.common_mistakes = data.common_mistakes || parsedLessonData.common_mistakes;
+              data.answer_key = data.answer_key || parsedLessonData.answer_key;
+              data.visual_content_descriptions = data.visual_content_descriptions || parsedLessonData.visual_content_descriptions;
+              data.main_content_summary_or_extract = data.main_content_summary_or_extract || parsedLessonData.main_content_summary_or_extract;
+              data.estimated_completion_time_minutes = data.estimated_completion_time_minutes || parsedLessonData.estimated_completion_time_minutes;
+              data.grade_level_suggestion = data.grade_level_suggestion || parsedLessonData.grade_level_suggestion;
+              data.content_type_suggestion = data.content_type_suggestion || parsedLessonData.content_type_suggestion;
+              (data as any).problems_with_context = parsedLessonData.problems_with_context;
+            }
+          } catch (e) {
+            console.error('Error parsing lesson_json:', e);
+          }
+        }
+
+        // Format complete content using helper function
+        const fullContent = formatCompleteEducationalContent(data);
+        
+        // Create metadata object
+        const metadata: any = {
+          subject: subjectName,
+          content_type: data.content_type_suggestion || data.content_type,
+          grade_level: data.grade_level_suggestion
+        };
+        
+        if (data.completed_at) {
+          metadata.completed = true;
+          metadata.completed_date = data.completed_at;
+          if (data.grade_value && data.grade_max_value) {
+            metadata.grade_percentage = Math.round((data.grade_value / data.grade_max_value) * 100);
+          }
+        } else if (['assignment', 'worksheet', 'quiz', 'test'].includes(data.content_type)) {
+          metadata.completed = false;
+        }
+        
+        if (data.due_date) {
+          metadata.due_date = data.due_date;
+        }
+        
+        if (data.estimated_completion_time_minutes) {
+          metadata.estimated_time_minutes = data.estimated_completion_time_minutes;
+        }
+        
+        if (data.worksheet_questions?.length > 0) {
+          metadata.total_questions = data.worksheet_questions.length;
+        } else if (data.tasks_or_questions?.length > 0) {
+          metadata.total_questions = data.tasks_or_questions.length;
+        }
+        
+        if (data.assignment_metadata) {
+          metadata.total_points = data.assignment_metadata.total_points;
+          metadata.difficulty_level = data.assignment_metadata.difficulty_level;
+        }
+        
+        // Return structured OpenAI-compatible response
+        const fetchResult = {
+          id: data.id,
+          title: data.title,
+          text: fullContent,
+          url: `internal://materials/${data.id}`,
+          metadata
+        };
+        
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(fetchResult)
+          }]
+        };
+        
+      } catch (error: any) {
+        console.error('❌ Fetch tool error:', error);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              id: id,
+              title: 'Error',
+              text: `Error retrieving material: ${error.message}`,
+              url: `internal://materials/${id}`,
+              metadata: { error: error.message }
+            })
+          }]
+        };
       }
-      
-      const result = await handleGetMaterialDetails(childId, materialId);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: result
-        }]
-      };
     }
   );
 
