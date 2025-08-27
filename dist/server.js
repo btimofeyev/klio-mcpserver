@@ -375,16 +375,68 @@ app.get('/health', (req, res) => {
         service: 'ai-tutor-mcp-server'
     });
 });
+// GET /tool - Tool discovery endpoint for MCP protocol
+app.get('/tool', (req, res) => {
+    res.json({
+        tools: [
+            {
+                name: 'search_student_work',
+                description: 'Search for student assignments and homework',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Student ID' },
+                        status: { type: 'string', enum: ['incomplete', 'completed', 'all'], description: 'Filter by completion status' },
+                        query: { type: 'string', description: 'Search query for specific work' },
+                        subject: { type: 'string', description: 'Filter by subject' },
+                        low_scores: { type: 'boolean', description: 'Include work with low scores for review' }
+                    },
+                    required: ['child_id']
+                }
+            },
+            {
+                name: 'get_material_details',
+                description: 'Get specific worksheets, tests, and assignments with all questions',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Student ID' },
+                        material_identifier: { type: 'string', description: 'Name or ID of the material (e.g., "America: Land I Love - Test 1")' }
+                    },
+                    required: ['child_id', 'material_identifier']
+                }
+            },
+            {
+                name: 'search_lessons',
+                description: 'Search for educational lessons and teaching materials',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Student ID' },
+                        query: { type: 'string', description: 'Search query for lessons' }
+                    },
+                    required: ['child_id']
+                }
+            }
+        ]
+    });
+});
+// POST /tool - Tool execution endpoint for MCP protocol
 app.post('/tool', async (req, res) => {
     try {
-        const { tool, arguments: args } = req.body;
-        if (!tool || !args || !args.child_id) {
-            res.status(400).json({ error: 'Missing required parameters' });
+        // MCP protocol expects 'name' instead of 'tool' and 'arguments' parameter
+        const { name, arguments: args } = req.body;
+        if (!name || !args || !args.child_id) {
+            res.status(400).json({
+                error: 'Missing required parameters',
+                details: 'Expected: { name, arguments: { child_id, ... } }'
+            });
             return;
         }
         let result;
         const childId = args.child_id;
-        switch (tool) {
+        console.log(`🔧 MCP Tool called: ${name} with args:`, args);
+        switch (name) {
             case 'search_lessons':
                 result = await handleSearchLessons(childId, args.query);
                 break;
@@ -400,15 +452,24 @@ app.post('/tool', async (req, res) => {
                 result = await handleGetMaterialDetails(childId, args.material_identifier);
                 break;
             default:
-                res.status(400).json({ error: `Unknown tool: ${tool}` });
+                res.status(400).json({ error: `Unknown tool: ${name}` });
                 return;
         }
-        res.json({ result });
+        // Return MCP-formatted response
+        res.json({
+            content: [{
+                    type: 'text',
+                    text: result
+                }]
+        });
         return;
     }
     catch (error) {
-        console.error('❌ Tool error:', error);
-        res.status(500).json({ error: error.message });
+        console.error('❌ MCP Tool error:', error);
+        res.status(500).json({
+            error: error.message,
+            details: 'Tool execution failed'
+        });
         return;
     }
 });
