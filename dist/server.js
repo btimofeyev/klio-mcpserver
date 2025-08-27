@@ -376,6 +376,52 @@ function createMcpServer() {
         },
         instructions: 'AI Tutor MCP Server providing intelligent access to student educational data for personalized tutoring experiences.'
     });
+    // CRITICAL: OpenAI expects these exact tool names for MCP integration
+    // Register search tool (OpenAI standard - required for GPT-5 integration)
+    mcpServer.tool('search', 'Search for educational content including assignments, lessons, and materials', {
+        query: z.string().describe('Search query for educational content')
+    }, async ({ query }) => {
+        // Extract child_id from the query if it starts with it
+        // Format: "child_id:UUID query text" or fallback to default
+        let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
+        let searchQuery = query;
+        if (query.startsWith('child_id:')) {
+            const parts = query.split(' ');
+            childId = parts[0].replace('child_id:', '');
+            searchQuery = parts.slice(1).join(' ');
+        }
+        // Search both assignments and lessons
+        const workResult = await handleSearchStudentWork(childId, searchQuery);
+        const lessonResult = await handleSearchLessons(childId, searchQuery);
+        // Combine results
+        const combinedResults = `**Student Assignments & Work:**\n${workResult}\n\n**Lessons & Teaching Materials:**\n${lessonResult}`;
+        return {
+            content: [{
+                    type: 'text',
+                    text: combinedResults
+                }]
+        };
+    });
+    // Register fetch tool (OpenAI standard - required for GPT-5 integration)
+    mcpServer.tool('fetch', 'Fetch complete details for a specific educational material by ID or title', {
+        id: z.string().describe('Material ID or title to fetch complete content for')
+    }, async ({ id }) => {
+        // Extract child_id from the id if it starts with it
+        let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
+        let materialId = id;
+        if (id.startsWith('child_id:')) {
+            const parts = id.split('|');
+            childId = parts[0].replace('child_id:', '');
+            materialId = parts[1] || id;
+        }
+        const result = await handleGetMaterialDetails(childId, materialId);
+        return {
+            content: [{
+                    type: 'text',
+                    text: result
+                }]
+        };
+    });
     // Register search_lessons tool
     mcpServer.tool('search_lessons', 'Search for educational lessons and teaching materials', {
         child_id: z.string().describe('Student UUID for context'),
