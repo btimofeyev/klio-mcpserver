@@ -3,13 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
-import { randomUUID } from "node:crypto";
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { z } from 'zod';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { InMemoryEventStore } from '@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js';
 dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,8 +17,15 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
         persistSession: false
     }
 });
+const app = express();
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control']
+}));
+app.use(express.json());
 // ===============================
-// HELPER FUNCTIONS (PRESERVED)
+// HELPER FUNCTIONS
 // ===============================
 async function getChildSubjects(childId) {
     const { data, error } = await supabase
@@ -36,6 +36,7 @@ async function getChildSubjects(childId) {
         throw error;
     return (data || []).map(cs => cs.id);
 }
+// formatDueDate function removed - dates are teacher planning, not student deadlines
 function formatGrade(gradeValue, gradeMaxValue) {
     if (!gradeValue || !gradeMaxValue)
         return '';
@@ -54,7 +55,7 @@ function formatGrade(gradeValue, gradeMaxValue) {
     return ` ${gradeEmoji} ${percentage}%`;
 }
 // ===============================
-// TOOL HANDLERS (PRESERVED LOGIC)
+// TOOL HANDLERS
 // ===============================
 async function handleSearchLessons(childId, query = '') {
     try {
@@ -261,6 +262,7 @@ async function handleGetMaterialDetails(childId, materialIdentifier) {
         const results = [];
         results.push(`📚 **${data.title}**`);
         results.push(`Subject: ${subjectName} | Type: ${data.content_type}`);
+        // Due dates removed - not relevant for student tutoring
         if (data.completed_at) {
             const gradeInfo = formatGrade(data.grade_value, data.grade_max_value);
             results.push(`✅ Completed: ${new Date(data.completed_at).toLocaleDateString()}${gradeInfo}`);
@@ -364,231 +366,226 @@ async function handleGetMaterialDetails(childId, materialIdentifier) {
     }
 }
 // ===============================
-// MCP SERVER INITIALIZATION
+// HTTP ENDPOINTS
 // ===============================
-function createMcpServer() {
-    const mcpServer = new McpServer({
-        name: 'ai-tutor-mcp-server',
-        version: '1.0.0',
-    }, {
-        capabilities: {
-            tools: {},
-        },
-        instructions: 'AI Tutor MCP Server providing intelligent access to student educational data for personalized tutoring experiences.'
-    });
-    // Register search_lessons tool
-    mcpServer.tool('search_lessons', 'Search for educational lessons and teaching materials', {
-        child_id: z.string().describe('Student UUID for context'),
-        query: z.string().optional().describe('Search query for lesson topics (e.g., "Other New England Colonies Are Founded", "History Section 3.2")')
-    }, async ({ child_id, query }) => {
-        const result = await handleSearchLessons(child_id, query || '');
-        return {
-            content: [{
-                    type: 'text',
-                    text: result
-                }]
-        };
-    });
-    // Register search_student_work tool
-    mcpServer.tool('search_student_work', 'Search for student assignments, worksheets, quizzes, and tests', {
-        child_id: z.string().describe('Student UUID for context'),
-        query: z.string().optional().describe('Search query for specific assignments'),
-        status: z.enum(['incomplete', 'completed', 'overdue', 'due_soon']).optional().describe('Filter by completion status'),
-        subject: z.string().optional().describe('Filter by subject name'),
-        content_type: z.enum(['assignment', 'worksheet', 'quiz', 'test']).optional().describe('Filter by content type'),
-        low_scores: z.boolean().optional().describe('Show only work with grades < 75%')
-    }, async ({ child_id, query, status, subject, content_type, low_scores }) => {
-        const result = await handleSearchStudentWork(child_id, query || '', {
-            status,
-            subject,
-            content_type,
-            low_scores
-        });
-        return {
-            content: [{
-                    type: 'text',
-                    text: result
-                }]
-        };
-    });
-    // Register get_material_details tool
-    mcpServer.tool('get_material_details', 'Get complete content for a specific educational material, including all questions and answers', {
-        child_id: z.string().describe('Student UUID for context'),
-        material_identifier: z.string().describe('Material title or UUID (e.g., "After Reading: The Friend Inside - Think & Discuss")')
-    }, async ({ child_id, material_identifier }) => {
-        const result = await handleGetMaterialDetails(child_id, material_identifier);
-        return {
-            content: [{
-                    type: 'text',
-                    text: result
-                }]
-        };
-    });
-    return mcpServer;
-}
-// ===============================
-// EXPRESS SERVER WITH DUAL TRANSPORT
-// ===============================
-const app = express();
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'mcp-session-id']
-}));
-app.use(express.json());
-// Store transports by session ID
-const transports = {};
-// Health check endpoint
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        service: 'ai-tutor-mcp-server',
-        protocol: 'MCP compliant'
+        service: 'ai-tutor-mcp-server'
     });
 });
-//=============================================================================
-// STREAMABLE HTTP TRANSPORT (PROTOCOL VERSION 2025-03-26)
-//=============================================================================
-app.all('/mcp', async (req, res) => {
-    console.log(`Received ${req.method} request to /mcp`);
-    try {
-        // Check for existing session ID
-        const sessionId = req.headers['mcp-session-id'];
-        let transport;
-        if (sessionId && transports[sessionId]) {
-            // Check if the transport is of the correct type
-            const existingTransport = transports[sessionId];
-            if (existingTransport instanceof StreamableHTTPServerTransport) {
-                // Reuse existing transport
-                transport = existingTransport;
-            }
-            else {
-                // Transport exists but is not a StreamableHTTPServerTransport (could be SSEServerTransport)
-                res.status(400).json({
-                    jsonrpc: '2.0',
-                    error: {
-                        code: -32000,
-                        message: 'Bad Request: Session exists but uses a different transport protocol',
+// GET /tool - Tool discovery endpoint for MCP protocol
+app.get('/tool', (req, res) => {
+    res.json({
+        tools: [
+            {
+                name: 'search_student_work',
+                description: 'Search for student assignments and homework',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Student ID' },
+                        status: { type: 'string', enum: ['incomplete', 'completed', 'all'], description: 'Filter by completion status' },
+                        query: { type: 'string', description: 'Search query for specific work' },
+                        subject: { type: 'string', description: 'Filter by subject' },
+                        low_scores: { type: 'boolean', description: 'Include work with low scores for review' }
                     },
-                    id: null,
-                });
-                return;
+                    required: ['child_id']
+                }
+            },
+            {
+                name: 'get_material_details',
+                description: 'Get specific worksheets, tests, and assignments with all questions',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Student ID' },
+                        material_identifier: { type: 'string', description: 'Name or ID of the material (e.g., "America: Land I Love - Test 1")' }
+                    },
+                    required: ['child_id', 'material_identifier']
+                }
+            },
+            {
+                name: 'search_lessons',
+                description: 'Search for educational lessons and teaching materials',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Student ID' },
+                        query: { type: 'string', description: 'Search query for lessons' }
+                    },
+                    required: ['child_id']
+                }
             }
-        }
-        else if (!sessionId && req.method === 'POST' && isInitializeRequest(req.body)) {
-            const eventStore = new InMemoryEventStore();
-            transport = new StreamableHTTPServerTransport({
-                sessionIdGenerator: () => randomUUID(),
-                eventStore, // Enable resumability
-                onsessioninitialized: (sessionId) => {
-                    // Store the transport by session ID when session is initialized
-                    console.log(`StreamableHTTP session initialized with ID: ${sessionId}`);
-                    transports[sessionId] = transport;
-                }
-            });
-            // Set up onclose handler to clean up transport when closed
-            transport.onclose = () => {
-                const sid = transport.sessionId;
-                if (sid && transports[sid]) {
-                    console.log(`Transport closed for session ${sid}, removing from transports map`);
-                    delete transports[sid];
-                }
-            };
-            // Connect the transport to the MCP server
-            const mcpServer = createMcpServer();
-            await mcpServer.connect(transport);
-        }
-        else {
-            // Invalid request - no session ID or not initialization request
+        ]
+    });
+});
+// POST /tool - Tool execution endpoint for MCP protocol
+app.post('/tool', async (req, res) => {
+    try {
+        // MCP protocol expects 'name' instead of 'tool' and 'arguments' parameter
+        const { name, arguments: args } = req.body;
+        if (!name || !args || !args.child_id) {
             res.status(400).json({
-                jsonrpc: '2.0',
-                error: {
-                    code: -32000,
-                    message: 'Bad Request: No valid session ID provided',
-                },
-                id: null,
+                error: 'Missing required parameters',
+                details: 'Expected: { name, arguments: { child_id, ... } }'
             });
             return;
         }
-        // Handle the request with the transport
-        await transport.handleRequest(req, res, req.body);
-    }
-    catch (error) {
-        console.error('Error handling MCP request:', error);
-        if (!res.headersSent) {
-            res.status(500).json({
-                jsonrpc: '2.0',
-                error: {
-                    code: -32603,
-                    message: 'Internal server error',
-                },
-                id: null,
-            });
+        let result;
+        const childId = args.child_id;
+        console.log(`🔧 MCP Tool called: ${name} with args:`, args);
+        switch (name) {
+            case 'search_lessons':
+                result = await handleSearchLessons(childId, args.query);
+                break;
+            case 'search_student_work':
+                result = await handleSearchStudentWork(childId, args.query, {
+                    status: args.status,
+                    subject: args.subject,
+                    content_type: args.content_type,
+                    low_scores: args.low_scores
+                });
+                break;
+            case 'get_material_details':
+                result = await handleGetMaterialDetails(childId, args.material_identifier);
+                break;
+            default:
+                res.status(400).json({ error: `Unknown tool: ${name}` });
+                return;
         }
-    }
-});
-//=============================================================================
-// DEPRECATED HTTP+SSE TRANSPORT (PROTOCOL VERSION 2024-11-05)
-//=============================================================================
-app.get('/sse', async (req, res) => {
-    console.log('Received GET request to /sse (deprecated SSE transport)');
-    const transport = new SSEServerTransport('/messages', res);
-    transports[transport.sessionId] = transport;
-    res.on("close", () => {
-        delete transports[transport.sessionId];
-    });
-    const mcpServer = createMcpServer();
-    await mcpServer.connect(transport);
-});
-app.post("/messages", async (req, res) => {
-    const sessionId = req.query.sessionId;
-    const existingTransport = transports[sessionId];
-    if (existingTransport instanceof SSEServerTransport) {
-        // Reuse existing transport
-        await existingTransport.handlePostMessage(req, res, req.body);
-    }
-    else if (existingTransport) {
-        // Transport exists but is not a SSEServerTransport (could be StreamableHTTPServerTransport)
-        res.status(400).json({
-            jsonrpc: '2.0',
-            error: {
-                code: -32000,
-                message: 'Bad Request: Session exists but uses a different transport protocol',
-            },
-            id: null,
+        // Return MCP-formatted response
+        res.json({
+            content: [{
+                    type: 'text',
+                    text: result
+                }]
         });
         return;
     }
-    else {
-        res.status(400).send('No transport found for sessionId');
+    catch (error) {
+        console.error('❌ MCP Tool error:', error);
+        res.status(500).json({
+            error: error.message,
+            details: 'Tool execution failed'
+        });
+        return;
     }
 });
-// Start the server
+// SSE endpoint for GPT-5 MCP integration
+app.get('/sse', async (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+    // Send initial connection event
+    res.write('event: connected\n');
+    res.write('data: {"type": "connected"}\n\n');
+    // Handle tool list request
+    const toolsList = {
+        tools: [
+            {
+                name: 'search_lessons',
+                description: 'Search for educational lessons and teaching materials',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Child ID for context' },
+                        query: { type: 'string', description: 'Search query for lessons' }
+                    },
+                    required: ['child_id']
+                }
+            },
+            {
+                name: 'search_student_work',
+                description: 'Search student assignments, homework, and completed work',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Child ID for context' },
+                        query: { type: 'string', description: 'Search query for work' },
+                        status: { type: 'string', enum: ['incomplete', 'completed', 'all'], description: 'Filter by completion status' },
+                        subject: { type: 'string', description: 'Filter by subject' },
+                        low_scores: { type: 'boolean', description: 'Include work with low scores for review' }
+                    },
+                    required: ['child_id']
+                }
+            },
+            {
+                name: 'get_material_details',
+                description: 'Get detailed content for a specific educational material including worksheets, tests, and assignments with all questions',
+                input_schema: {
+                    type: 'object',
+                    properties: {
+                        child_id: { type: 'string', description: 'Child ID for context' },
+                        material_identifier: { type: 'string', description: 'Name or ID of the material to retrieve (e.g., "America: Land I Love - Test 1")' }
+                    },
+                    required: ['child_id', 'material_identifier']
+                }
+            }
+        ]
+    };
+    // Send tools list
+    res.write('event: tools\n');
+    res.write(`data: ${JSON.stringify(toolsList)}\n\n`);
+    // Keep connection alive and handle requests
+    const keepAlive = setInterval(() => {
+        res.write('event: ping\n');
+        res.write('data: {"type": "ping"}\n\n');
+    }, 30000);
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        res.end();
+    });
+    req.on('error', () => {
+        clearInterval(keepAlive);
+        res.end();
+    });
+});
+// Handle tool execution via POST for SSE
+app.post('/sse/tool', async (req, res) => {
+    try {
+        const { name, arguments: args } = req.body;
+        if (!name || !args || !args.child_id) {
+            res.status(400).json({ error: 'Missing required parameters' });
+            return;
+        }
+        let result;
+        const childId = args.child_id;
+        switch (name) {
+            case 'search_lessons':
+                result = await handleSearchLessons(childId, args.query);
+                break;
+            case 'search_student_work':
+                result = await handleSearchStudentWork(childId, args.query, {
+                    status: args.status,
+                    subject: args.subject,
+                    content_type: args.content_type,
+                    low_scores: args.low_scores
+                });
+                break;
+            case 'get_material_details':
+                result = await handleGetMaterialDetails(childId, args.material_identifier);
+                break;
+            default:
+                res.status(400).json({ error: `Unknown tool: ${name}` });
+                return;
+        }
+        res.json({ content: [{ type: 'text', text: result }] });
+        return;
+    }
+    catch (error) {
+        console.error(`❌ SSE tool execution error:`, error);
+        res.status(500).json({ error: `Tool execution failed: ${error.message}` });
+    }
+});
+// Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 AI Tutor MCP server running on port ${PORT}`);
-    console.log(`📡 MCP Protocol compliant server with dual transport support`);
-    console.log(`
-==============================================
-SUPPORTED TRANSPORT OPTIONS:
-
-1. Streamable HTTP (Protocol version: 2025-03-26) - RECOMMENDED
-   Endpoint: /mcp
-   Methods: GET, POST, DELETE
-   Usage: 
-     - Initialize with POST to /mcp
-     - Establish SSE stream with GET to /mcp
-     - Send requests with POST to /mcp
-     - Resume with session ID header
-
-2. HTTP+SSE (Protocol version: 2024-11-05) - DEPRECATED
-   Endpoints: /sse (GET) and /messages (POST)
-   Usage:
-     - Establish SSE with GET to /sse
-     - Send messages with POST to /messages?sessionId=<id>
-
-3. Health Check: GET /health
-==============================================
-  `);
+    console.log(`📡 SSE endpoint available at: http://localhost:${PORT}/sse`);
 });
-//# sourceMappingURL=server.js.map
+//# sourceMappingURL=server-backup.js.map
