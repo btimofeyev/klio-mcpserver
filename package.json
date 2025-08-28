@@ -9,7 +9,7 @@
     },
     "scripts": {
         "build": "tsc",
-        "start": "node dist/server.js",
+        "start": "node dist/server-gpt5.js",
         "start:gpt5": "node dist/server-gpt5.js",
         "start:railway": "node railway-start.js", 
         "start:local": "node dist/server.js",
