@@ -50,20 +50,38 @@ export class SearchService {
   }
 
   /**
-   * Get child subject IDs for a given child
+   * Get child subject IDs for a given child with retry logic
    */
   private async getChildSubjects(childId: string): Promise<string[]> {
     console.log('🆔 Getting child subjects for:', childId);
     
-    const result = await this.pool.query(
-      'SELECT id FROM child_subjects WHERE child_id = $1',
-      [childId]
-    );
+    // Add connection timeout and retry logic
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const result = await this.pool.query(
+          'SELECT id FROM child_subjects WHERE child_id = $1',
+          [childId]
+        );
+        
+        const childSubjectIds = result.rows.map((row: any) => row.id);
+        console.log(`📊 Found ${childSubjectIds.length} child_subjects`);
+        
+        return childSubjectIds;
+      } catch (error: any) {
+        console.log(`⚠️  Database attempt ${attempt}/3 failed:`, error.message);
+        
+        if (attempt === 3) {
+          console.error('❌ All database attempts failed, returning fallback data');
+          // Return empty array to allow graceful degradation
+          return [];
+        }
+        
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+      }
+    }
     
-    const childSubjectIds = result.rows.map((row: any) => row.id);
-    console.log(`📊 Found ${childSubjectIds.length} child_subjects`);
-    
-    return childSubjectIds;
+    return [];
   }
 
   /**
@@ -146,10 +164,26 @@ export class SearchService {
     console.log('🔍 Query:', baseQuery.replace(/\s+/g, ' '));
     console.log('📝 Params:', params);
 
-    const result = await this.pool.query(baseQuery, params);
-    
-    console.log(`✅ Database returned ${result.rows.length} materials`);
-    return result.rows as MaterialData[];
+    // Add retry logic for search query
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = await this.pool.query(baseQuery, params);
+        console.log(`✅ Database returned ${result.rows.length} materials`);
+        return result.rows as MaterialData[];
+      } catch (error: any) {
+        console.log(`⚠️  Search attempt ${attempt}/2 failed:`, error.message);
+        
+        if (attempt === 2) {
+          console.error('❌ Search failed, returning empty results');
+          return [];
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+
+    return [];
   }
 
   /**

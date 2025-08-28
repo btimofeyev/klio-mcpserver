@@ -14,7 +14,7 @@ export declare class SearchService {
      */
     intelligentSearch(childId: string, query: string): Promise<SearchResult[]>;
     /**
-     * Get child subject IDs for a given child
+     * Get child subject IDs for a given child with retry logic
      */
     private getChildSubjects;
     /**

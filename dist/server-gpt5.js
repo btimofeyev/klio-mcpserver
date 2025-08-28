@@ -94,7 +94,27 @@ The server intelligently routes queries to appropriate content types and applies
             // Execute intelligent search
             const results = await searchService.intelligentSearch(childId, searchTerm);
             console.log(`✅ Returning ${results.length} intelligent search results`);
-            // Return in exact GPT-5 format
+            // If no results due to database issues, provide helpful message
+            if (results.length === 0) {
+                const fallbackMessage = {
+                    results: [{
+                            id: 'system-message',
+                            title: `🔄 Searching for ${QueryParser.describeIntent(parsed.intent).toLowerCase()}...`,
+                            url: 'https://klio-mcpserver-production.up.railway.app/health'
+                        }, {
+                            id: 'system-status',
+                            title: 'Database connection is being established. Please try your search again in a moment.',
+                            url: 'https://klio-mcpserver-production.up.railway.app/health'
+                        }]
+                };
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify(fallbackMessage)
+                        }]
+                };
+            }
+            // Return normal results
             return {
                 content: [{
                         type: 'text',
