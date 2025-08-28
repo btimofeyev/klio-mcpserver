@@ -121,28 +121,23 @@ export class SearchService {
     // Apply urgency filters
     const now = new Date().toISOString();
     if (intent.urgency === 'overdue') {
-      baseQuery += ` AND due_date < $${++paramCount} AND completed_at IS NULL`;
+      baseQuery += ` AND due_date < $${++paramCount}`;
       params.push(now);
     } else if (intent.urgency === 'due_today') {
       const today = new Date();
       const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
       const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
-      baseQuery += ` AND due_date >= $${++paramCount} AND due_date < $${++paramCount} AND completed_at IS NULL`;
+      baseQuery += ` AND due_date >= $${++paramCount} AND due_date < $${++paramCount}`;
       params.push(todayStart, todayEnd);
     } else if (intent.urgency === 'due_soon') {
       const threeDaysFromNow = new Date();
       threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-      baseQuery += ` AND due_date <= $${++paramCount} AND due_date >= $${++paramCount} AND completed_at IS NULL`;
+      baseQuery += ` AND due_date <= $${++paramCount} AND due_date >= $${++paramCount}`;
       params.push(threeDaysFromNow.toISOString(), now);
     }
 
-    // Apply keyword search
-    if (intent.keywords.length > 0) {
-      const searchTerms = intent.keywords.join(' | ');
-      paramCount++;
-      baseQuery += ` AND (title ILIKE $${paramCount} OR lesson_json::text ILIKE $${paramCount})`;
-      params.push(`%${searchTerms}%`);
-    }
+    // Skip keyword search for homework queries - let GPT-5 see all materials and decide
+    // Keyword search was causing 0 results due to literal "whats | homework" matching
 
     // Subject-specific search (if we can determine subject from title or content)
     if (intent.subject) {
