@@ -50,7 +50,12 @@ async function getChildSubjects(childId) {
 function formatGrade(gradeValue, gradeMaxValue) {
     if (!gradeValue || !gradeMaxValue)
         return '';
-    const percentage = Math.round((gradeValue / gradeMaxValue) * 100);
+    // Convert TEXT values to numbers
+    const gradeNum = typeof gradeValue === 'string' ? parseFloat(gradeValue) : gradeValue;
+    const maxNum = typeof gradeMaxValue === 'string' ? parseFloat(gradeMaxValue) : gradeMaxValue;
+    if (isNaN(gradeNum) || isNaN(maxNum) || maxNum === 0)
+        return '';
+    const percentage = Math.round((gradeNum / maxNum) * 100);
     let gradeEmoji = '';
     if (percentage >= 90)
         gradeEmoji = '🅰️';
@@ -193,7 +198,11 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
             materials = materials.filter(m => {
                 if (!m.grade_value || !m.grade_max_value)
                     return false;
-                const percentage = (m.grade_value / m.grade_max_value) * 100;
+                const gradeNum = typeof m.grade_value === 'string' ? parseFloat(m.grade_value) : m.grade_value;
+                const maxNum = typeof m.grade_max_value === 'string' ? parseFloat(m.grade_max_value) : m.grade_max_value;
+                if (isNaN(gradeNum) || isNaN(maxNum) || maxNum === 0)
+                    return false;
+                const percentage = (gradeNum / maxNum) * 100;
                 return percentage < 75; // Less than 75% is considered low
             });
         }
@@ -553,7 +562,10 @@ function createMcpServer() {
                 workQuery = workQuery.ilike('title', `%${searchQuery}%`);
             }
             console.log('📊 Executing student work query with childSubjectIds:', childSubjectIds);
-            const { data: workData } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
+            const { data: workData, error: workError } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
+            if (workError) {
+                console.error('❌ Student work query error:', workError);
+            }
             console.log('📊 Search found', workData?.length || 0, 'student work items');
             if (workData) {
                 workData.forEach(item => {
@@ -583,7 +595,10 @@ function createMcpServer() {
                 lessonQuery = lessonQuery.ilike('title', `%${searchQuery}%`);
             }
             console.log('📊 Executing lesson query with childSubjectIds:', childSubjectIds);
-            const { data: lessonData } = await lessonQuery.order('title', { ascending: true }).limit(15);
+            const { data: lessonData, error: lessonError } = await lessonQuery.order('title', { ascending: true }).limit(15);
+            if (lessonError) {
+                console.error('❌ Lesson query error:', lessonError);
+            }
             console.log('📚 Search found', lessonData?.length || 0, 'lesson items');
             if (lessonData) {
                 lessonData.forEach(item => {
