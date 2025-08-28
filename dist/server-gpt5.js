@@ -224,12 +224,21 @@ app.use(express.json());
 // Store transports by session ID
 const transports = {};
 // Enhanced health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+    let dbStatus = 'unknown';
+    try {
+        await pool.query('SELECT 1');
+        dbStatus = 'connected';
+    }
+    catch (error) {
+        dbStatus = 'disconnected';
+    }
     res.json({
         status: 'healthy',
         version: '2.0.0-gpt5-enhanced',
         service: 'klio-ai-tutor-mcp-server',
         protocol: 'MCP compatible',
+        database: dbStatus,
         features: [
             'intelligent-query-parsing',
             'educational-prioritization',
@@ -374,27 +383,8 @@ app.post("/messages", async (req, res) => {
 async function startEnhancedServer() {
     try {
         console.log('🚀 Starting Enhanced Klio AI Tutor MCP Server for GPT-5...');
-        console.log('📊 Testing database connection...');
-        // Test PostgreSQL connection
-        const testResult = await pool.query('SELECT NOW() as current_time');
-        console.log('✅ PostgreSQL connected:', testResult.rows[0].current_time);
-        // Test materials table and count
-        const materialsTest = await pool.query(`
-      SELECT 
-        COUNT(*) as total_materials,
-        COUNT(CASE WHEN completed_at IS NULL THEN 1 END) as incomplete_materials,
-        COUNT(CASE WHEN due_date < NOW() AND completed_at IS NULL THEN 1 END) as overdue_materials
-      FROM materials 
-      LIMIT 1
-    `);
-        const stats = materialsTest.rows[0];
-        console.log('📊 Database stats:', {
-            total: stats.total_materials,
-            incomplete: stats.incomplete_materials,
-            overdue: stats.overdue_materials
-        });
-        // Start Express server
-        app.listen(PORT, '0.0.0.0', () => {
+        // Start Express server first (non-blocking)
+        const server = app.listen(PORT, '0.0.0.0', () => {
             console.log(`
 🎓 KLIO AI TUTOR MCP SERVER v2.0 (GPT-5 ENHANCED)
 ════════════════════════════════════════════════
@@ -427,6 +417,33 @@ Ready for GPT-5 integration! 🚀
 ════════════════════════════════════════════════
       `);
         });
+        // Test database connection in background (non-blocking)
+        console.log('📊 Testing database connection in background...');
+        setTimeout(async () => {
+            try {
+                const testResult = await pool.query('SELECT NOW() as current_time');
+                console.log('✅ PostgreSQL connected:', testResult.rows[0].current_time);
+                const materialsTest = await pool.query(`
+          SELECT 
+            COUNT(*) as total_materials,
+            COUNT(CASE WHEN completed_at IS NULL THEN 1 END) as incomplete_materials,
+            COUNT(CASE WHEN due_date < NOW() AND completed_at IS NULL THEN 1 END) as overdue_materials
+          FROM materials 
+          LIMIT 1
+        `);
+                const stats = materialsTest.rows[0];
+                console.log('📊 Database stats:', {
+                    total: stats.total_materials,
+                    incomplete: stats.incomplete_materials,
+                    overdue: stats.overdue_materials
+                });
+                console.log('🗄️  Database connection fully operational!');
+            }
+            catch (dbError) {
+                console.error('⚠️  Database connection issue:', dbError.message);
+                console.log('🔄 Server will continue running - database operations will be retried');
+            }
+        }, 2000); // Wait 2 seconds before testing DB
     }
     catch (error) {
         console.error('❌ Enhanced server startup failed:', error);
