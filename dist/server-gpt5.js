@@ -423,9 +423,8 @@ async function startEnhancedServer() {
 🛠️  ENDPOINTS:
    • GET  /health - Server health & feature status
    • GET  /info   - Detailed server information
-   • GET  /sse    - GPT-5 optimized SSE transport
-   • POST /messages - Message handling
-   • ALL  /mcp    - Streamable HTTP transport
+   • ALL  /mcp    - Primary GPT-5 transport (Streamable HTTP)
+   • GET  /sse    - Legacy SSE transport (fallback)
 
 🎯 QUERY EXAMPLES:
    • "what's my homework" → incomplete assignments

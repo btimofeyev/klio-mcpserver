@@ -164,12 +164,12 @@ export class SearchService {
         }
         switch (intent.type) {
             case 'homework':
-                return ['assignment', 'worksheet', 'quiz', 'test'];
+                return ['lesson', 'worksheet', 'quiz', 'review'];
             case 'lesson':
                 return ['lesson', 'reading', 'chapter'];
             case 'review':
                 // For review, include both educational and assessment materials
-                return ['assignment', 'worksheet', 'quiz', 'test', 'lesson', 'reading'];
+                return ['lesson', 'worksheet', 'quiz', 'review'];
             case 'mixed':
             default:
                 return []; // No filter, search all types

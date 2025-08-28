@@ -213,7 +213,7 @@ export class QueryParser {
     if (intent.contentType) {
       filters.content_type = intent.contentType;
     } else if (intent.type === 'homework') {
-      filters.content_types = ['assignment', 'worksheet', 'quiz', 'test'];
+      filters.content_types = ['lesson', 'worksheet', 'quiz', 'review'];
     } else if (intent.type === 'lesson') {
       filters.content_types = ['lesson', 'reading', 'chapter'];
     }
@@ -262,7 +262,7 @@ export class QueryParser {
   static isHomeworkQuery(intent: QueryIntent): boolean {
     return intent.type === 'homework' || 
            intent.status === 'incomplete' || 
-           ['assignment', 'worksheet', 'quiz', 'test'].includes(intent.contentType || '');
+           ['lesson', 'worksheet', 'quiz', 'review'].includes(intent.contentType || '');
   }
 
   /**
