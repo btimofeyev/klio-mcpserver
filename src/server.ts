@@ -27,6 +27,15 @@ const supabase: SupabaseClient = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: false
+  },
+  db: {
+    schema: 'public'
+  },
+  global: {
+    headers: {
+      'apikey': supabaseServiceKey,
+      'Authorization': `Bearer ${supabaseServiceKey}`
+    }
   }
 });
 
@@ -646,21 +655,20 @@ function createMcpServer(): McpServer {
         const results: any[] = [];
         
         // Search student work (assignments, worksheets, quizzes, tests)
-        // DEBUG: Test with single child_subject_id first
-        console.log('🐛 Testing with single child_subject_id:', childSubjectIds[0]);
+        console.log('🔍 Searching all child_subject_ids:', childSubjectIds);
         
         let workQuery = supabase
           .from('materials')
           .select('*')
-          .eq('child_subject_id', childSubjectIds[0])
+          .in('child_subject_id', childSubjectIds)
           .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
 
         if (searchQuery.trim()) {
           workQuery = workQuery.ilike('title', `%${searchQuery}%`);
         }
 
-        console.log('📊 Executing student work query with single child_subject_id:', childSubjectIds[0]);
-        console.log('🐛 Query details - table: materials, child_subject_id:', childSubjectIds[0]);
+        console.log('📊 Executing student work query with all child_subject_ids:', childSubjectIds);
+        console.log('🐛 Query details - table: materials, child_subject_ids count:', childSubjectIds.length);
         
         const { data: workData, error: workError, status, statusText } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
         
@@ -707,20 +715,19 @@ function createMcpServer(): McpServer {
         }
         
         // Search lessons and teaching materials
-        // DEBUG: Test with single child_subject_id first
-        console.log('🐛 Testing lesson query with single child_subject_id:', childSubjectIds[0]);
+        console.log('🔍 Searching lessons for all child_subject_ids:', childSubjectIds);
         
         let lessonQuery = supabase
           .from('materials')
           .select('*')
-          .eq('child_subject_id', childSubjectIds[0])
+          .in('child_subject_id', childSubjectIds)
           .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
 
         if (searchQuery.trim()) {
           lessonQuery = lessonQuery.ilike('title', `%${searchQuery}%`);
         }
 
-        console.log('📊 Executing lesson query with single child_subject_id:', childSubjectIds[0]);
+        console.log('📊 Executing lesson query with all child_subject_ids:', childSubjectIds);
         const { data: lessonData, error: lessonError, status: lessonStatus, statusText: lessonStatusText } = await lessonQuery.order('title', { ascending: true }).limit(15);
         
         console.log('🐛 Lesson query result:', { data: lessonData, error: lessonError, status: lessonStatus, statusText: lessonStatusText });
@@ -1225,6 +1232,18 @@ async function startServer() {
     }
     
     console.log('✅ Database connection successful');
+    
+    // Test materials table access
+    const { data: materialsTest, error: materialsError } = await supabase
+      .from('materials')
+      .select('id')
+      .limit(1);
+    
+    if (materialsError) {
+      console.error('❌ Materials table access failed:', materialsError);
+    } else {
+      console.log('✅ Materials table accessible, sample count:', materialsTest?.length || 0);
+    }
     console.log('🔧 Supabase URL:', supabaseUrl);
     
     // Start the Express server
