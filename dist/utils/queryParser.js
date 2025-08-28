@@ -22,13 +22,14 @@ export class QueryParser {
         /\b(review|revisit|go\s+over|practice|low\s+score|grade|graded)\b/i,
         /\b(completed|finished|done)\b/i
     ];
-    // Subject patterns
+    // Subject patterns - maps user input to database subject names
     static SUBJECT_PATTERNS = {
-        'math': /\b(math|mathematics|algebra|geometry|calculus|arithmetic)\b/i,
-        'science': /\b(science|biology|chemistry|physics)\b/i,
-        'english': /\b(english|language\s+arts|writing|reading|literature)\b/i,
-        'history': /\b(history|social\s+studies|geography)\b/i,
-        'spanish': /\b(spanish|espanol)\b/i
+        'Mathematics': /\b(math|mathematics|algebra|geometry|calculus|arithmetic|numbers)\b/i,
+        'Science': /\b(science|biology|chemistry|physics)\b/i,
+        'English Language Arts': /\b(english|language\s+arts|writing|grammar|ela)\b/i,
+        'Literature': /\b(literature|lit|novels|stories|poems|poetry|reading)\b/i,
+        'History': /\b(history|social\s+studies|geography)\b/i,
+        'Bible': /\b(bible|biblical|religion|religious)\b/i
     };
     // Content type patterns
     static CONTENT_TYPE_PATTERNS = {

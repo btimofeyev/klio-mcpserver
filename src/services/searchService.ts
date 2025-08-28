@@ -90,11 +90,14 @@ export class SearchService {
   private async executeSearch(childSubjectIds: string[], intent: QueryIntent): Promise<MaterialData[]> {
     let baseQuery = `
       SELECT 
-        id, title, content_type, due_date, completed_at,
-        grade_value, grade_max_value, grading_notes, lesson_json,
-        parent_material_id, is_primary_lesson, child_subject_id
-      FROM materials 
-      WHERE child_subject_id = ANY($1::uuid[])
+        m.id, m.title, m.content_type, m.due_date, m.completed_at,
+        m.grade_value, m.grade_max_value, m.grading_notes, m.lesson_json,
+        m.parent_material_id, m.is_primary_lesson, m.child_subject_id,
+        s.name as subject_name
+      FROM materials m
+      JOIN child_subjects cs ON m.child_subject_id = cs.id
+      JOIN subjects s ON cs.subject_id = s.id
+      WHERE m.child_subject_id = ANY($1::uuid[])
     `;
     
     const params: any[] = [childSubjectIds];
@@ -159,11 +162,11 @@ export class SearchService {
       )`;
     }
 
-    // Subject-specific search (if we can determine subject from title or content)
+    // Subject-specific search using actual subject name from database
     if (intent.subject) {
       paramCount++;
-      baseQuery += ` AND (title ILIKE $${paramCount} OR lesson_json::text ILIKE $${paramCount})`;
-      params.push(`%${intent.subject}%`);
+      baseQuery += ` AND s.name = $${paramCount}`;
+      params.push(intent.subject);
     }
 
     // Enhanced ordering - prioritize by educational relevance and urgency
