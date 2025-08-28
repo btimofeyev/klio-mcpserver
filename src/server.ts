@@ -646,23 +646,34 @@ function createMcpServer(): McpServer {
         const results: any[] = [];
         
         // Search student work (assignments, worksheets, quizzes, tests)
+        // DEBUG: Test with single child_subject_id first
+        console.log('🐛 Testing with single child_subject_id:', childSubjectIds[0]);
+        
         let workQuery = supabase
           .from('materials')
-          .select('id, title, content_type, due_date, completed_at, grade_value, grade_max_value, lesson_json')
-          .in('child_subject_id', childSubjectIds)
+          .select('*')
+          .eq('child_subject_id', childSubjectIds[0])
           .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
 
         if (searchQuery.trim()) {
           workQuery = workQuery.ilike('title', `%${searchQuery}%`);
         }
 
-        console.log('📊 Executing student work query with childSubjectIds:', childSubjectIds);
-        const { data: workData, error: workError } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
+        console.log('📊 Executing student work query with single child_subject_id:', childSubjectIds[0]);
+        console.log('🐛 Query details - table: materials, child_subject_id:', childSubjectIds[0]);
+        
+        const { data: workData, error: workError, status, statusText } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
+        
+        console.log('🐛 Raw query result:', { data: workData, error: workError, status, statusText });
         
         if (workError) {
           console.error('❌ Student work query error:', workError);
         }
         console.log('📊 Search found', workData?.length || 0, 'student work items');
+        
+        if (workData && workData.length > 0) {
+          console.log('✅ Sample data:', workData[0]);
+        }
         
         if (workData) {
           workData.forEach(item => {
@@ -696,23 +707,32 @@ function createMcpServer(): McpServer {
         }
         
         // Search lessons and teaching materials
+        // DEBUG: Test with single child_subject_id first
+        console.log('🐛 Testing lesson query with single child_subject_id:', childSubjectIds[0]);
+        
         let lessonQuery = supabase
           .from('materials')
-          .select('id, title, content_type, lesson_json')
-          .in('child_subject_id', childSubjectIds)
+          .select('*')
+          .eq('child_subject_id', childSubjectIds[0])
           .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
 
         if (searchQuery.trim()) {
           lessonQuery = lessonQuery.ilike('title', `%${searchQuery}%`);
         }
 
-        console.log('📊 Executing lesson query with childSubjectIds:', childSubjectIds);
-        const { data: lessonData, error: lessonError } = await lessonQuery.order('title', { ascending: true }).limit(15);
+        console.log('📊 Executing lesson query with single child_subject_id:', childSubjectIds[0]);
+        const { data: lessonData, error: lessonError, status: lessonStatus, statusText: lessonStatusText } = await lessonQuery.order('title', { ascending: true }).limit(15);
+        
+        console.log('🐛 Lesson query result:', { data: lessonData, error: lessonError, status: lessonStatus, statusText: lessonStatusText });
         
         if (lessonError) {
           console.error('❌ Lesson query error:', lessonError);
         }
         console.log('📚 Search found', lessonData?.length || 0, 'lesson items');
+        
+        if (lessonData && lessonData.length > 0) {
+          console.log('✅ Sample lesson data:', lessonData[0]);
+        }
         
         if (lessonData) {
           lessonData.forEach(item => {
