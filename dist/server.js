@@ -28,13 +28,24 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 // HELPER FUNCTIONS (PRESERVED)
 // ===============================
 async function getChildSubjects(childId) {
+    console.log('🆔 getChildSubjects called with child_id:', childId);
+    console.log('🆔 child_id type:', typeof childId, 'length:', childId.length);
     const { data, error } = await supabase
         .from('child_subjects')
         .select('id')
         .eq('child_id', childId);
-    if (error)
+    console.log('📊 Database query: child_subjects.child_id =', childId);
+    if (error) {
+        console.error('❌ getChildSubjects database error:', error);
         throw error;
-    return (data || []).map(cs => cs.id);
+    }
+    const childSubjectIds = (data || []).map(cs => cs.id);
+    console.log('📊 getChildSubjects returned', data?.length || 0, 'child_subjects for child_id:', childId);
+    console.log('🆔 Child subject IDs:', childSubjectIds);
+    if (!data || data.length === 0) {
+        console.warn('⚠️ No child_subjects found for child_id:', childId, '- this may indicate an invalid child_id');
+    }
+    return childSubjectIds;
 }
 function formatGrade(gradeValue, gradeMaxValue) {
     if (!gradeValue || !gradeMaxValue)
@@ -58,7 +69,9 @@ function formatGrade(gradeValue, gradeMaxValue) {
 // ===============================
 async function handleSearchLessons(childId, query = '') {
     try {
+        console.log('📚 handleSearchLessons called - child_id:', childId, 'query:', query);
         const childSubjectIds = await getChildSubjects(childId);
+        console.log('📊 handleSearchLessons received childSubjectIds:', childSubjectIds.length, 'items');
         let dbQuery = supabase
             .from('materials')
             .select(`
@@ -127,7 +140,9 @@ async function handleSearchLessons(childId, query = '') {
 }
 async function handleSearchStudentWork(childId, query = '', filters = {}) {
     try {
+        console.log('📝 handleSearchStudentWork called - child_id:', childId, 'query:', query, 'filters:', JSON.stringify(filters));
         const childSubjectIds = await getChildSubjects(childId);
+        console.log('📊 handleSearchStudentWork received childSubjectIds:', childSubjectIds.length, 'items');
         let dbQuery = supabase
             .from('materials')
             .select(`
@@ -228,7 +243,9 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
 }
 async function handleGetMaterialDetails(childId, materialIdentifier) {
     try {
+        console.log('🔍 handleGetMaterialDetails called - child_id:', childId, 'material_identifier:', materialIdentifier);
         const childSubjectIds = await getChildSubjects(childId);
+        console.log('📊 handleGetMaterialDetails received childSubjectIds:', childSubjectIds.length, 'items');
         let dbQuery = supabase
             .from('materials')
             .select(`
@@ -539,6 +556,7 @@ function createMcpServer() {
                 console.log('⚠️ No child_id prefix found, using default:', childId, 'full query:', query);
             }
             const childSubjectIds = await getChildSubjects(childId);
+            console.log('📊 Search tool received childSubjectIds:', childSubjectIds.length, 'items:', childSubjectIds);
             const results = [];
             // Search student work (assignments, worksheets, quizzes, tests)
             let workQuery = supabase
@@ -556,6 +574,7 @@ function createMcpServer() {
             if (searchQuery.trim()) {
                 workQuery = workQuery.ilike('title', `%${searchQuery}%`);
             }
+            console.log('📊 Executing student work query with childSubjectIds:', childSubjectIds);
             const { data: workData } = await workQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(15);
             console.log('📊 Search found', workData?.length || 0, 'student work items');
             if (workData) {
@@ -593,7 +612,9 @@ function createMcpServer() {
             if (searchQuery.trim()) {
                 lessonQuery = lessonQuery.ilike('title', `%${searchQuery}%`);
             }
+            console.log('📊 Executing lesson query with childSubjectIds:', childSubjectIds);
             const { data: lessonData } = await lessonQuery.order('title', { ascending: true }).limit(15);
+            console.log('📚 Search found', lessonData?.length || 0, 'lesson items');
             if (lessonData) {
                 lessonData.forEach(item => {
                     const subjectName = item.child_subject?.custom_subject_name_override ||
@@ -648,6 +669,7 @@ function createMcpServer() {
         id: z.string().describe('Material ID or title to fetch complete content for')
     }, async ({ id }) => {
         try {
+            console.log('📚 MCP Fetch Tool Called with id:', JSON.stringify(id));
             // Extract child_id from the id if it starts with it
             let childId = '058a3da2-0268-4d8c-995a-c732cd1b732a'; // Default child for testing
             let materialId = id;
@@ -655,8 +677,13 @@ function createMcpServer() {
                 const parts = id.split('|');
                 childId = parts[0].replace('child_id:', '');
                 materialId = parts[1] || id;
+                console.log('🆔 Extracted child_id from fetch id:', childId, 'material_id:', materialId);
+            }
+            else {
+                console.log('⚠️ No child_id prefix found in fetch, using default:', childId, 'material_id:', materialId);
             }
             const childSubjectIds = await getChildSubjects(childId);
+            console.log('📊 Fetch tool received childSubjectIds:', childSubjectIds.length, 'items:', childSubjectIds);
             let dbQuery = supabase
                 .from('materials')
                 .select(`
@@ -678,12 +705,24 @@ function createMcpServer() {
                 .in('child_subject_id', childSubjectIds);
             // Search by ID first, then by title with fuzzy matching
             if (materialId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+                console.log('📊 Searching by UUID:', materialId);
                 dbQuery = dbQuery.eq('id', materialId);
             }
             else {
+                console.log('📊 Searching by title pattern:', materialId);
                 dbQuery = dbQuery.ilike('title', `%${materialId}%`);
             }
+            console.log('📊 Executing fetch query with childSubjectIds:', childSubjectIds);
             const { data, error } = await dbQuery.limit(1).single();
+            if (error) {
+                console.error('❌ Fetch database error:', error);
+            }
+            else if (data) {
+                console.log('✅ Fetch found material:', data.title, 'type:', data.content_type);
+            }
+            else {
+                console.warn('⚠️ Fetch found no material for identifier:', materialId);
+            }
             if (error || !data) {
                 return {
                     content: [{
@@ -982,11 +1021,28 @@ app.post("/messages", async (req, res) => {
         res.status(400).send('No transport found for sessionId');
     }
 });
-// Start the server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 AI Tutor MCP server running on port ${PORT}`);
-    console.log(`📡 MCP Protocol compliant server with dual transport support`);
-    console.log(`
+// Test database connection and start the server
+async function startServer() {
+    try {
+        console.log('🔄 Starting AI Tutor MCP Server...');
+        console.log('📊 Testing database connection...');
+        // Test database connection
+        const { data, error } = await supabase
+            .from('child_subjects')
+            .select('id')
+            .limit(1);
+        if (error) {
+            console.error('❌ Database connection failed:', error);
+            process.exit(1);
+        }
+        console.log('✅ Database connection successful');
+        console.log('🔧 Supabase URL:', supabaseUrl);
+        // Start the Express server
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 AI Tutor MCP server running on port ${PORT}`);
+            console.log(`📡 MCP Protocol compliant server with dual transport support`);
+            console.log(`🔍 Available MCP Tools: search, fetch, search_lessons, search_student_work, get_material_details`);
+            console.log(`
 ==============================================
 SUPPORTED TRANSPORT OPTIONS:
 
@@ -1007,6 +1063,14 @@ SUPPORTED TRANSPORT OPTIONS:
 
 3. Health Check: GET /health
 ==============================================
-  `);
-});
+      `);
+        });
+    }
+    catch (error) {
+        console.error('❌ Failed to start server:', error);
+        process.exit(1);
+    }
+}
+// Start the server
+startServer();
 //# sourceMappingURL=server.js.map
