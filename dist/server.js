@@ -154,7 +154,7 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
         )
       `)
             .in('child_subject_id', childSubjectIds)
-            .in('content_type', ['assignment', 'worksheet', 'quiz', 'test']);
+            .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
         // Apply text search
         if (query.trim()) {
             dbQuery = dbQuery.ilike('title', `%${query}%`);
@@ -194,9 +194,14 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
             dbQuery = dbQuery.eq('content_type', filters.content_type);
         }
         dbQuery = dbQuery.order('due_date', { ascending: true, nullsFirst: false }).limit(25);
+        console.log('🔍 About to execute materials query with child_subject_ids:', childSubjectIds);
+        console.log('🔍 Query filters - status:', filters.status, 'content_type:', filters.content_type);
         const { data, error } = await dbQuery;
-        if (error)
+        console.log('📊 Materials query result - data count:', data?.length || 0, 'error:', error?.message || 'none');
+        if (error) {
+            console.error('❌ Materials query error:', error);
             throw error;
+        }
         let materials = data || [];
         // Apply low scores filter after fetching
         if (filters.low_scores) {
