@@ -89,8 +89,8 @@ async function handleSearchLessons(childId, query = '') {
         let dbQuery = supabase
             .from('materials')
             .select('id, title, content_type, lesson_json, due_date')
-            .in('child_subject_id', childSubjectIds)
-            .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
+            .or(childSubjectIds.map(id => `child_subject_id.eq.${id}`).join(','))
+            .in('content_type', ['lesson', 'reading', 'chapter']);
         // Add text search if query provided
         if (query.trim()) {
             dbQuery = dbQuery.ilike('title', `%${query}%`);
@@ -152,7 +152,7 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
         let dbQuery = supabase
             .from('materials')
             .select('id, title, content_type, due_date, completed_at, grade_value, grade_max_value, grading_notes, lesson_json')
-            .in('child_subject_id', childSubjectIds)
+            .or(childSubjectIds.map(id => `child_subject_id.eq.${id}`).join(','))
             .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
         // Apply text search
         if (query.trim()) {
@@ -566,7 +566,7 @@ function createMcpServer() {
             let workQuery = supabase
                 .from('materials')
                 .select('*')
-                .in('child_subject_id', childSubjectIds)
+                .or(childSubjectIds.map(id => `child_subject_id.eq.${id}`).join(','))
                 .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
             if (searchQuery.trim()) {
                 workQuery = workQuery.ilike('title', `%${searchQuery}%`);
@@ -615,8 +615,8 @@ function createMcpServer() {
             let lessonQuery = supabase
                 .from('materials')
                 .select('*')
-                .in('child_subject_id', childSubjectIds)
-                .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
+                .or(childSubjectIds.map(id => `child_subject_id.eq.${id}`).join(','))
+                .in('content_type', ['lesson', 'reading', 'chapter']);
             if (searchQuery.trim()) {
                 lessonQuery = lessonQuery.ilike('title', `%${searchQuery}%`);
             }
