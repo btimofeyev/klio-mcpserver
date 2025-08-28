@@ -114,19 +114,52 @@ export class SearchService {
         }
         // Skip keyword search for homework queries - let GPT-5 see all materials and decide
         // Keyword search was causing 0 results due to literal "whats | homework" matching
+        // For homework queries, add smart date filtering to show most relevant materials
+        if (intent.type === 'homework') {
+            baseQuery += ` AND (
+        -- All incomplete work (priority #1)
+        completed_at IS NULL
+        OR 
+        -- Recent work with poor grades (last 7 days, < 75%)
+        (completed_at > NOW() - INTERVAL '7 days' 
+         AND grade_value IS NOT NULL 
+         AND grade_max_value IS NOT NULL
+         AND (grade_value::float / grade_max_value::float) < 0.75)
+        OR
+        -- Recently completed work for review (last 3 days)
+        completed_at > NOW() - INTERVAL '3 days'
+        OR
+        -- Upcoming work (next 7 days)
+        (due_date BETWEEN NOW() AND NOW() + INTERVAL '7 days')
+      )`;
+        }
         // Subject-specific search (if we can determine subject from title or content)
         if (intent.subject) {
             paramCount++;
             baseQuery += ` AND (title ILIKE $${paramCount} OR lesson_json::text ILIKE $${paramCount})`;
             params.push(`%${intent.subject}%`);
         }
-        // Ordering - prioritize by educational importance
+        // Enhanced ordering - prioritize by educational relevance and urgency
         baseQuery += ` ORDER BY 
-      CASE WHEN completed_at IS NULL AND due_date < NOW() THEN 1 ELSE 2 END,
-      CASE WHEN completed_at IS NULL THEN 1 ELSE 2 END,
+      -- Overdue incomplete work (most urgent)
+      CASE WHEN completed_at IS NULL AND due_date < NOW() THEN 1 
+      -- Incomplete work due soon
+      WHEN completed_at IS NULL AND due_date <= NOW() + INTERVAL '3 days' THEN 2
+      -- Other incomplete work  
+      WHEN completed_at IS NULL THEN 3
+      -- Recent low grades (needs review)
+      WHEN completed_at > NOW() - INTERVAL '7 days' 
+           AND grade_value IS NOT NULL 
+           AND grade_max_value IS NOT NULL
+           AND (grade_value::float / grade_max_value::float) < 0.75 THEN 4
+      -- Upcoming tests/quizzes
+      WHEN content_type IN ('quiz', 'test') AND due_date BETWEEN NOW() AND NOW() + INTERVAL '7 days' THEN 5
+      -- Recently completed work
+      WHEN completed_at > NOW() - INTERVAL '3 days' THEN 6
+      ELSE 7 END,
       due_date ASC NULLS LAST,
       title ASC
-      LIMIT 20
+      LIMIT 15
     `;
         console.log('📊 Executing enhanced search query...');
         console.log('🔍 Query:', baseQuery.replace(/\s+/g, ' '));
