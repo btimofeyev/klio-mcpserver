@@ -74,13 +74,7 @@ async function handleSearchLessons(childId, query = '') {
         console.log('📊 handleSearchLessons received childSubjectIds:', childSubjectIds.length, 'items');
         let dbQuery = supabase
             .from('materials')
-            .select(`
-        id, title, content_type, lesson_json, due_date,
-        child_subject:child_subject_id(
-          subject:subject_id(name),
-          custom_subject_name_override
-        )
-      `)
+            .select('id, title, content_type, lesson_json, due_date')
             .in('child_subject_id', childSubjectIds)
             .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
         // Add text search if query provided
@@ -98,9 +92,7 @@ async function handleSearchLessons(childId, query = '') {
         }
         const results = ['📚 **Teaching Materials Found:**', ''];
         data.forEach(item => {
-            const subjectName = item.child_subject?.custom_subject_name_override ||
-                item.child_subject?.subject?.name || 'General';
-            results.push(`**${item.title}** (${subjectName})`);
+            results.push(`**${item.title}** (${item.content_type})`);
             // Parse lesson content for key information
             if (item.lesson_json) {
                 try {
@@ -145,14 +137,7 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
         console.log('📊 handleSearchStudentWork received childSubjectIds:', childSubjectIds.length, 'items');
         let dbQuery = supabase
             .from('materials')
-            .select(`
-        id, title, content_type, due_date, completed_at, 
-        grade_value, grade_max_value, grading_notes, lesson_json,
-        child_subject:child_subject_id(
-          subject:subject_id(name),
-          custom_subject_name_override
-        )
-      `)
+            .select('id, title, content_type, due_date, completed_at, grade_value, grade_max_value, grading_notes, lesson_json')
             .in('child_subject_id', childSubjectIds)
             .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
         // Apply text search
@@ -224,19 +209,15 @@ async function handleSearchStudentWork(childId, query = '', filters = {}) {
         if (incomplete.length > 0) {
             results.push(`**📋 Incomplete Work (${incomplete.length}):**`);
             incomplete.forEach(item => {
-                const subjectName = item.child_subject?.custom_subject_name_override ||
-                    item.child_subject?.subject?.name || 'General';
-                results.push(`• **${item.title}** [${item.content_type}] (${subjectName})`);
+                results.push(`• **${item.title}** [${item.content_type}]`);
             });
             results.push('');
         }
         if (completed.length > 0) {
             results.push(`**✅ Completed Work (${completed.length}):**`);
             completed.forEach(item => {
-                const subjectName = item.child_subject?.custom_subject_name_override ||
-                    item.child_subject?.subject?.name || 'General';
                 const gradeInfo = formatGrade(item.grade_value, item.grade_max_value);
-                results.push(`• **${item.title}** [${item.content_type}] (${subjectName})${gradeInfo}`);
+                results.push(`• **${item.title}** [${item.content_type}]${gradeInfo}`);
             });
         }
         return results.join('\n');
@@ -278,11 +259,10 @@ async function handleGetMaterialDetails(childId, materialIdentifier) {
         if (error || !data) {
             return `Material "${materialIdentifier}" not found. Please check the title or ID.`;
         }
-        const subjectName = data.child_subject?.custom_subject_name_override ||
-            data.child_subject?.subject?.name || 'General';
+        // Subject name will be retrieved separately if needed
         const results = [];
         results.push(`📚 **${data.title}**`);
-        results.push(`Subject: ${subjectName} | Type: ${data.content_type}`);
+        results.push(`Type: ${data.content_type}`);
         if (data.completed_at) {
             const gradeInfo = formatGrade(data.grade_value, data.grade_max_value);
             results.push(`✅ Completed: ${new Date(data.completed_at).toLocaleDateString()}${gradeInfo}`);
@@ -364,7 +344,7 @@ async function handleGetMaterialDetails(childId, materialIdentifier) {
                     return JSON.stringify({
                         title: data.title,
                         content_type: data.content_type,
-                        subject: subjectName,
+                        content_type_original: data.content_type,
                         completed_at: data.completed_at,
                         grade_value: data.grade_value,
                         grade_max_value: data.grade_max_value,
@@ -566,14 +546,7 @@ function createMcpServer() {
             // Search student work (assignments, worksheets, quizzes, tests)
             let workQuery = supabase
                 .from('materials')
-                .select(`
-            id, title, content_type, due_date, completed_at, 
-            grade_value, grade_max_value, lesson_json, main_content_summary_or_extract,
-            child_subject:child_subject_id(
-              subject:subject_id(name),
-              custom_subject_name_override
-            )
-          `)
+                .select('id, title, content_type, due_date, completed_at, grade_value, grade_max_value, lesson_json, main_content_summary_or_extract')
                 .in('child_subject_id', childSubjectIds)
                 .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
             if (searchQuery.trim()) {
@@ -584,8 +557,6 @@ function createMcpServer() {
             console.log('📊 Search found', workData?.length || 0, 'student work items');
             if (workData) {
                 workData.forEach(item => {
-                    const subjectName = item.child_subject?.custom_subject_name_override ||
-                        item.child_subject?.subject?.name || 'General';
                     // Create preview text with rich information
                     const statusInfo = item.completed_at ?
                         `✅ Completed${formatGrade(item.grade_value, item.grade_max_value)}` :
@@ -593,7 +564,7 @@ function createMcpServer() {
                     const previewText = item.main_content_summary_or_extract ||
                         (item.lesson_json ? JSON.parse(item.lesson_json).main_content_summary_or_extract : '') ||
                         'Educational material';
-                    const snippet = `${item.content_type.toUpperCase()} | ${subjectName} | ${statusInfo} | ${previewText.substring(0, 150)}...`;
+                    const snippet = `${item.content_type.toUpperCase()} | ${statusInfo} | ${previewText.substring(0, 150)}...`;
                     results.push({
                         id: item.id,
                         title: item.title,
@@ -605,13 +576,7 @@ function createMcpServer() {
             // Search lessons and teaching materials
             let lessonQuery = supabase
                 .from('materials')
-                .select(`
-            id, title, content_type, lesson_json, main_content_summary_or_extract,
-            child_subject:child_subject_id(
-              subject:subject_id(name),
-              custom_subject_name_override
-            )
-          `)
+                .select('id, title, content_type, lesson_json, main_content_summary_or_extract')
                 .in('child_subject_id', childSubjectIds)
                 .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
             if (searchQuery.trim()) {
@@ -622,8 +587,6 @@ function createMcpServer() {
             console.log('📚 Search found', lessonData?.length || 0, 'lesson items');
             if (lessonData) {
                 lessonData.forEach(item => {
-                    const subjectName = item.child_subject?.custom_subject_name_override ||
-                        item.child_subject?.subject?.name || 'General';
                     let lessonInfo = '';
                     if (item.lesson_json) {
                         try {
@@ -637,7 +600,7 @@ function createMcpServer() {
                             lessonInfo = 'Teaching material';
                         }
                     }
-                    const snippet = `LESSON | ${subjectName} | ${lessonInfo} | ${(item.main_content_summary_or_extract || '').substring(0, 100)}...`;
+                    const snippet = `LESSON | ${lessonInfo} | ${(item.main_content_summary_or_extract || '').substring(0, 100)}...`;
                     results.push({
                         id: item.id,
                         title: item.title,
@@ -742,8 +705,7 @@ function createMcpServer() {
                         }]
                 };
             }
-            const subjectName = data.child_subject?.custom_subject_name_override ||
-                data.child_subject?.subject?.name || 'General';
+            // Subject information not needed for basic fetch operation
             // Parse lesson_json if it exists
             let parsedLessonData = null;
             if (data.lesson_json) {
@@ -777,7 +739,6 @@ function createMcpServer() {
             const fullContent = formatCompleteEducationalContent(data);
             // Create metadata object
             const metadata = {
-                subject: subjectName,
                 content_type: data.content_type_suggestion || data.content_type,
                 grade_level: data.grade_level_suggestion
             };
