@@ -8,7 +8,7 @@ restartPolicyType = "on_failure"
 
 [nixpacks]
 buildCommand = "npm run build"
-startCommand = "npm start"
+startCommand = "npm run start:gpt5"
 
 [[statics]]
 name = "public"
