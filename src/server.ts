@@ -471,10 +471,10 @@ function formatCompleteEducationalContent(material: any): string {
     sections.push('');
   }
 
-  // Main Content Summary
-  if (material.main_content_summary_or_extract) {
+  // Main Content Summary (from lesson_json if available)
+  if ((material as any).content_summary) {
     sections.push('📖 LESSON CONTENT:');
-    sections.push(material.main_content_summary_or_extract);
+    sections.push((material as any).content_summary);
     sections.push('');
   }
 
@@ -648,7 +648,7 @@ function createMcpServer(): McpServer {
         // Search student work (assignments, worksheets, quizzes, tests)
         let workQuery = supabase
           .from('materials')
-          .select('id, title, content_type, due_date, completed_at, grade_value, grade_max_value, lesson_json, main_content_summary_or_extract')
+          .select('id, title, content_type, due_date, completed_at, grade_value, grade_max_value, lesson_json')
           .in('child_subject_id', childSubjectIds)
           .in('content_type', ['assignment', 'worksheet', 'quiz', 'test', 'review']);
 
@@ -671,9 +671,18 @@ function createMcpServer(): McpServer {
               `✅ Completed${formatGrade(item.grade_value, item.grade_max_value)}` : 
               '📋 Incomplete';
             
-            const previewText = item.main_content_summary_or_extract || 
-              (item.lesson_json ? JSON.parse(item.lesson_json).main_content_summary_or_extract : '') || 
-              'Educational material';
+            let previewText = 'Educational material';
+            if (item.lesson_json) {
+              try {
+                const lessonData = typeof item.lesson_json === 'string' ? JSON.parse(item.lesson_json) : item.lesson_json;
+                previewText = lessonData.main_content_summary_or_extract || 
+                             lessonData.description || 
+                             lessonData.title || 
+                             'Educational material';
+              } catch (e) {
+                previewText = 'Educational material';
+              }
+            }
             
             const snippet = `${item.content_type.toUpperCase()} | ${statusInfo} | ${previewText.substring(0, 150)}...`;
             
@@ -689,7 +698,7 @@ function createMcpServer(): McpServer {
         // Search lessons and teaching materials
         let lessonQuery = supabase
           .from('materials')
-          .select('id, title, content_type, lesson_json, main_content_summary_or_extract')
+          .select('id, title, content_type, lesson_json')
           .in('child_subject_id', childSubjectIds)
           .or('content_type.in.(lesson,reading,chapter),is_primary_lesson.eq.true');
 
@@ -721,7 +730,17 @@ function createMcpServer(): McpServer {
               }
             }
             
-            const snippet = `LESSON | ${lessonInfo} | ${(item.main_content_summary_or_extract || '').substring(0, 100)}...`;
+            let contentPreview = '';
+            if (item.lesson_json) {
+              try {
+                const lessonData = typeof item.lesson_json === 'string' ? JSON.parse(item.lesson_json) : item.lesson_json;
+                contentPreview = lessonData.main_content_summary_or_extract || lessonData.description || '';
+              } catch (e) {
+                contentPreview = '';
+              }
+            }
+            
+            const snippet = `LESSON | ${lessonInfo} | ${contentPreview.substring(0, 100)}...`;
             
             results.push({
               id: item.id,
@@ -791,7 +810,7 @@ function createMcpServer(): McpServer {
           .select(`
             id, title, content_type, due_date, completed_at,
             grade_value, grade_max_value, grading_notes, lesson_json,
-            parent_material_id, is_primary_lesson, main_content_summary_or_extract,
+            parent_material_id, is_primary_lesson,
             learning_objectives, subject_keywords_or_subtopics, tasks_or_questions,
             worksheet_questions, assignment_metadata, teaching_methodology,
             prerequisites, common_mistakes, answer_key, visual_content_descriptions,
@@ -862,7 +881,10 @@ function createMcpServer(): McpServer {
               data.common_mistakes = data.common_mistakes || parsedLessonData.common_mistakes;
               data.answer_key = data.answer_key || parsedLessonData.answer_key;
               data.visual_content_descriptions = data.visual_content_descriptions || parsedLessonData.visual_content_descriptions;
-              data.main_content_summary_or_extract = data.main_content_summary_or_extract || parsedLessonData.main_content_summary_or_extract;
+              // Extract summary from lesson_json if available
+              if (parsedLessonData.main_content_summary_or_extract) {
+                (data as any).content_summary = parsedLessonData.main_content_summary_or_extract;
+              }
               data.estimated_completion_time_minutes = data.estimated_completion_time_minutes || parsedLessonData.estimated_completion_time_minutes;
               data.grade_level_suggestion = data.grade_level_suggestion || parsedLessonData.grade_level_suggestion;
               data.content_type_suggestion = data.content_type_suggestion || parsedLessonData.content_type_suggestion;
